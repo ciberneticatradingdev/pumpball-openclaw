@@ -327,6 +327,7 @@ function setupSocket() {
     addSystemMessage(gameChat, 'Game started! Good luck!');
   });
 
+  let lastPlayerListUpdate = 0;
   socket.on('gameState', (state: GameState) => {
     if (!isInGame) return;
 
@@ -334,11 +335,16 @@ function setupSocket() {
     targetState = state;
     lastStateTime = performance.now();
 
-    // Update score and player list on every server tick
+    // Update score (cheap text update)
     $<HTMLElement>('#score-red').textContent = String(state.score.red);
     $<HTMLElement>('#score-blue').textContent = String(state.score.blue);
 
-    renderGamePlayers(state);
+    // Update player list max 2x/sec (avoid DOM thrashing)
+    const now = performance.now();
+    if (now - lastPlayerListUpdate > 500) {
+      renderGamePlayers(state);
+      lastPlayerListUpdate = now;
+    }
   });
 
   socket.on('goal', (data: { team: Team; score: { red: number; blue: number } }) => {
