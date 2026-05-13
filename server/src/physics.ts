@@ -1,31 +1,37 @@
-// PumpBall Server Physics — Haxball-faithful custom engine (no Matter.js)
-// Based on the original Haxball physics: position += speed, speed *= damping, custom collisions
+// PumpBall Server Physics — Based on Futsal x3 Liga de Primera (Chile) map
+// Coordinate system: center-origin (0,0 = center of field), like original Haxball
 
-const FIELD_WIDTH = 1000;
-const FIELD_HEIGHT = 550;
-const BORDER = 30; // Inner field offset, matches renderer
+// === MAP DIMENSIONS ===
+const MAP_W = 620;  // half-width (total 1240)
+const MAP_H = 300;  // half-height (total 600)
+const FIELD_W = 550; // inner field half-width
+const FIELD_H = 240; // inner field half-height
 
-// Original Haxball values (Classic map scaled to our field)
+// === BALL (from disc0 in map) ===
+const BALL_RADIUS = 6.4;
+const BALL_INV_MASS = 1.5;
+const BALL_BCOEF = 0.4;
+const BALL_DAMPING = 0.99;
+
+// === PLAYER (from playerPhysics in map) ===
 const PLAYER_RADIUS = 15;
-const BALL_RADIUS = 10;
-const GOAL_OFFSET = 80;
-
-// Player physics (from original Haxball)
-const PLAYER_DAMPING = 0.96;
-const PLAYER_ACCELERATION = 0.1;
-const PLAYER_KICKING_ACCELERATION = 0.07;
-const PLAYER_KICKING_DAMPING = 0.96;
 const PLAYER_INV_MASS = 0.5;
-const PLAYER_BCOEF = 0.5;
+const PLAYER_BCOEF = 0;
+const PLAYER_DAMPING = 0.96;
+const PLAYER_ACCELERATION = 0.11;
+const PLAYER_KICKING_ACCELERATION = 0.083;
 const KICK_STRENGTH = 5;
 
-// Ball physics (from original Haxball)
-const BALL_DAMPING = 0.99;
-const BALL_INV_MASS = 1;
-const BALL_BCOEF = 0.5;
+// === GOALS ===
+const GOAL_LINE_X = 558.95; // where goal is scored
+const GOAL_Y = 80;          // goal opening: -80 to +80
+const GOAL_POST_X = 550;
+const GOAL_POST_RADIUS = 5;
+const GOAL_NET_X = 590;     // back of the net
 
-// Wall bCoef
-const WALL_BCOEF = 1;
+// === WALLS ===
+const WALL_BCOEF = 1; // ball area walls
+const OUTER_BCOEF = 0.1; // outer walls
 
 type Team = 'red' | 'blue' | 'spectator';
 
@@ -74,32 +80,27 @@ export type PhysicsSnapshot = {
   }>;
 };
 
+// Spawn positions from map (center-origin)
 const TEAM_POSITIONS = {
   red: [
-    { x: BORDER + 110, y: FIELD_HEIGHT * 0.3 },
-    { x: BORDER + 110, y: FIELD_HEIGHT * 0.5 },
-    { x: BORDER + 110, y: FIELD_HEIGHT * 0.7 },
+    { x: -250, y: -50 },
+    { x: -250, y: 0 },
+    { x: -250, y: 50 },
   ],
   blue: [
-    { x: FIELD_WIDTH - BORDER - 110, y: FIELD_HEIGHT * 0.3 },
-    { x: FIELD_WIDTH - BORDER - 110, y: FIELD_HEIGHT * 0.5 },
-    { x: FIELD_WIDTH - BORDER - 110, y: FIELD_HEIGHT * 0.7 },
+    { x: 250, y: -50 },
+    { x: 250, y: 0 },
+    { x: 250, y: 50 },
   ],
 };
 
-// Field boundaries (inner playfield)
-const FIELD_MIN_X = BORDER;
-const FIELD_MAX_X = FIELD_WIDTH - BORDER;
-const FIELD_MIN_Y = BORDER;
-const FIELD_MAX_Y = FIELD_HEIGHT - BORDER;
-
-// Goal zone Y range
-const GOAL_Y_TOP = FIELD_HEIGHT / 3;
-const GOAL_Y_BOT = (FIELD_HEIGHT * 2) / 3;
-
-// Goal line X positions (where goals are scored — at the field edge)
-const GOAL_LINE_LEFT = BORDER;
-const GOAL_LINE_RIGHT = FIELD_WIDTH - BORDER;
+// Static goal posts (immovable discs)
+const GOAL_POSTS: Disc[] = [
+  { x: -GOAL_POST_X, y: -GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
+  { x: -GOAL_POST_X, y: GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
+  { x: GOAL_POST_X, y: -GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
+  { x: GOAL_POST_X, y: GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
+];
 
 function normalise(v: [number, number]): [number, number] {
   const len = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
@@ -111,46 +112,35 @@ export class ServerPhysics {
   private ball: Disc;
   private players: Map<string, PlayerData> = new Map();
   private onGoal: (team: 'red' | 'blue') => void;
-  private prevBallX: number;
 
   constructor(onGoal: (team: 'red' | 'blue') => void) {
     this.onGoal = onGoal;
 
     this.ball = {
-      x: FIELD_WIDTH / 2,
-      y: FIELD_HEIGHT / 2,
-      xspeed: 0,
-      yspeed: 0,
+      x: 0, y: 0,
+      xspeed: 0, yspeed: 0,
       radius: BALL_RADIUS,
       invMass: BALL_INV_MASS,
       damping: BALL_DAMPING,
       bCoef: BALL_BCOEF,
     };
-
-    this.prevBallX = this.ball.x;
   }
 
   addPlayer(id: string, team: 'red' | 'blue', index: number): void {
     if (this.players.has(id)) return;
-
     const positions = TEAM_POSITIONS[team];
     const pos = positions[index] ?? positions[0];
 
-    const disc: Disc = {
-      x: pos.x,
-      y: pos.y,
-      xspeed: 0,
-      yspeed: 0,
-      radius: PLAYER_RADIUS,
-      invMass: PLAYER_INV_MASS,
-      damping: PLAYER_DAMPING,
-      bCoef: PLAYER_BCOEF,
-    };
-
     this.players.set(id, {
-      disc,
-      id,
-      team,
+      disc: {
+        x: pos.x, y: pos.y,
+        xspeed: 0, yspeed: 0,
+        radius: PLAYER_RADIUS,
+        invMass: PLAYER_INV_MASS,
+        damping: PLAYER_DAMPING,
+        bCoef: PLAYER_BCOEF,
+      },
+      id, team,
       keyboard: { ...initialKeyboard },
     });
   }
@@ -165,37 +155,43 @@ export class ServerPhysics {
   }
 
   update(_delta: number): void {
-    this.prevBallX = this.ball.x;
-
-    // 1. Apply player movement (like original Haxball)
+    // 1. Player movement
     for (const player of this.players.values()) {
       this.applyPlayerMovement(player);
     }
 
-    // 2. Move all discs: position += speed
+    // 2. Move discs
     this.moveDisc(this.ball);
     for (const player of this.players.values()) {
       this.moveDisc(player.disc);
     }
 
-    // 3. Apply damping: speed *= damping
+    // 3. Damping
     this.applyDamping(this.ball);
     for (const player of this.players.values()) {
       this.applyDamping(player.disc);
     }
 
-    // 4. Resolve disc-disc collisions
-    const allDiscs = [this.ball, ...Array.from(this.players.values()).map(p => p.disc)];
-    for (let i = 0; i < allDiscs.length; i++) {
-      for (let j = i + 1; j < allDiscs.length; j++) {
-        this.resolveDiscCollision(allDiscs[i], allDiscs[j]);
+    // 4. Disc-disc collisions (players + ball)
+    const allMovable = [this.ball, ...Array.from(this.players.values()).map(p => p.disc)];
+    for (let i = 0; i < allMovable.length; i++) {
+      for (let j = i + 1; j < allMovable.length; j++) {
+        this.resolveDiscCollision(allMovable[i], allMovable[j]);
       }
     }
 
-    // 5. Handle wall boundaries
+    // 5. Goal post collisions (ball and players vs static posts)
+    for (const post of GOAL_POSTS) {
+      this.resolveDiscCollision(this.ball, post);
+      for (const player of this.players.values()) {
+        this.resolveDiscCollision(player.disc, post);
+      }
+    }
+
+    // 6. Walls
     this.handleWalls();
 
-    // 6. Check goals
+    // 7. Goals
     this.checkGoals();
   }
 
@@ -203,8 +199,7 @@ export class ServerPhysics {
     const { keyboard, disc } = player;
     const isKicking = keyboard.spaceClicked;
 
-    let dx = 0;
-    let dy = 0;
+    let dx = 0, dy = 0;
     if (keyboard.leftClicked) dx--;
     if (keyboard.rightClicked) dx++;
     if (keyboard.upClicked) dy--;
@@ -216,7 +211,7 @@ export class ServerPhysics {
     disc.xspeed += dir[0] * accel;
     disc.yspeed += dir[1] * accel;
 
-    // Kick: apply force to ball if close enough
+    // Kick ball
     if (isKicking) {
       const distX = this.ball.x - disc.x;
       const distY = this.ball.y - disc.y;
@@ -224,9 +219,9 @@ export class ServerPhysics {
       const kickRange = disc.radius + this.ball.radius + 4;
 
       if (dist > 0 && dist <= kickRange) {
-        const normal = [distX / dist, distY / dist];
-        this.ball.xspeed += normal[0] * KICK_STRENGTH;
-        this.ball.yspeed += normal[1] * KICK_STRENGTH;
+        const n = [distX / dist, distY / dist];
+        this.ball.xspeed += n[0] * KICK_STRENGTH;
+        this.ball.yspeed += n[1] * KICK_STRENGTH;
       }
     }
   }
@@ -250,135 +245,133 @@ export class ServerPhysics {
     if (dist <= 0 || dist > radiusSum) return;
 
     const normal = [dx / dist, dy / dist];
-    const massFactor = a.invMass / (a.invMass + b.invMass);
+    const totalInvMass = a.invMass + b.invMass;
+    if (totalInvMass === 0) return;
 
-    // Separate overlapping discs
+    const massFactorA = a.invMass / totalInvMass;
+    const massFactorB = b.invMass / totalInvMass;
+
+    // Separate
     const overlap = radiusSum - dist;
-    a.x += normal[0] * overlap * massFactor;
-    a.y += normal[1] * overlap * massFactor;
-    b.x -= normal[0] * overlap * (1 - massFactor);
-    b.y -= normal[1] * overlap * (1 - massFactor);
+    a.x += normal[0] * overlap * massFactorA;
+    a.y += normal[1] * overlap * massFactorA;
+    b.x -= normal[0] * overlap * massFactorB;
+    b.y -= normal[1] * overlap * massFactorB;
 
-    // Velocity response (original Haxball formula)
+    // Velocity response
     const relVelX = a.xspeed - b.xspeed;
     const relVelY = a.yspeed - b.yspeed;
     const normalVel = relVelX * normal[0] + relVelY * normal[1];
 
     if (normalVel < 0) {
       const speedFactor = normalVel * (a.bCoef * b.bCoef + 1);
-
-      a.xspeed -= normal[0] * speedFactor * massFactor;
-      a.yspeed -= normal[1] * speedFactor * massFactor;
-      b.xspeed += normal[0] * speedFactor * (1 - massFactor);
-      b.yspeed += normal[1] * speedFactor * (1 - massFactor);
+      a.xspeed -= normal[0] * speedFactor * massFactorA;
+      a.yspeed -= normal[1] * speedFactor * massFactorA;
+      b.xspeed += normal[0] * speedFactor * massFactorB;
+      b.yspeed += normal[1] * speedFactor * massFactorB;
     }
   }
 
   private handleWalls(): void {
-    // Ball walls
-    this.bounceDiscOffWalls(this.ball, true);
+    const ball = this.ball;
+    const inGoalY = ball.y > -GOAL_Y && ball.y < GOAL_Y;
 
-    // Player walls
+    // Ball vs field walls
+    // Top/bottom: always solid at ±FIELD_H
+    if (ball.y - ball.radius < -FIELD_H) {
+      ball.y = -FIELD_H + ball.radius;
+      ball.yspeed = Math.abs(ball.yspeed) * WALL_BCOEF;
+    }
+    if (ball.y + ball.radius > FIELD_H) {
+      ball.y = FIELD_H - ball.radius;
+      ball.yspeed = -Math.abs(ball.yspeed) * WALL_BCOEF;
+    }
+
+    // Left/right: solid except in goal zone
+    if (ball.x - ball.radius < -FIELD_W && !inGoalY) {
+      ball.x = -FIELD_W + ball.radius;
+      ball.xspeed = Math.abs(ball.xspeed) * WALL_BCOEF;
+    }
+    if (ball.x + ball.radius > FIELD_W && !inGoalY) {
+      ball.x = FIELD_W - ball.radius;
+      ball.xspeed = -Math.abs(ball.xspeed) * WALL_BCOEF;
+    }
+
+    // Ball in goal net area: bounce off back/top/bottom of net
+    if (inGoalY || (ball.x < -FIELD_W || ball.x > FIELD_W)) {
+      // Left net
+      if (ball.x - ball.radius < -GOAL_NET_X) {
+        ball.x = -GOAL_NET_X + ball.radius;
+        ball.xspeed = Math.abs(ball.xspeed) * OUTER_BCOEF;
+      }
+      // Right net
+      if (ball.x + ball.radius > GOAL_NET_X) {
+        ball.x = GOAL_NET_X - ball.radius;
+        ball.xspeed = -Math.abs(ball.xspeed) * OUTER_BCOEF;
+      }
+      // Net top/bottom when ball is past the goal line
+      if (ball.x < -FIELD_W || ball.x > FIELD_W) {
+        if (ball.y - ball.radius < -GOAL_Y) {
+          ball.y = -GOAL_Y + ball.radius;
+          ball.yspeed = Math.abs(ball.yspeed) * OUTER_BCOEF;
+        }
+        if (ball.y + ball.radius > GOAL_Y) {
+          ball.y = GOAL_Y - ball.radius;
+          ball.yspeed = -Math.abs(ball.yspeed) * OUTER_BCOEF;
+        }
+      }
+    }
+
+    // Players vs outer walls (no bounce, just clamp)
     for (const player of this.players.values()) {
-      this.bounceDiscOffWalls(player.disc, false);
-    }
-  }
-
-  private bounceDiscOffWalls(disc: Disc, isBall: boolean): void {
-    const minX = FIELD_MIN_X + disc.radius;
-    const maxX = FIELD_MAX_X - disc.radius;
-    const minY = FIELD_MIN_Y + disc.radius;
-    const maxY = FIELD_MAX_Y - disc.radius;
-
-    const inGoalZone = disc.y > GOAL_Y_TOP && disc.y < GOAL_Y_BOT;
-
-    // Left wall
-    if (disc.x < minX) {
-      if (!isBall || !inGoalZone) {
-        disc.x = minX;
-        disc.xspeed = isBall ? Math.abs(disc.xspeed) * WALL_BCOEF : 0;
-      }
-    }
-    // Right wall
-    if (disc.x > maxX) {
-      if (!isBall || !inGoalZone) {
-        disc.x = maxX;
-        disc.xspeed = isBall ? -Math.abs(disc.xspeed) * WALL_BCOEF : 0;
-      }
-    }
-    // Top wall
-    if (disc.y < minY) {
-      disc.y = minY;
-      disc.yspeed = isBall ? Math.abs(disc.yspeed) * WALL_BCOEF : 0;
-    }
-    // Bottom wall
-    if (disc.y > maxY) {
-      disc.y = maxY;
-      disc.yspeed = isBall ? -Math.abs(disc.yspeed) * WALL_BCOEF : 0;
+      const d = player.disc;
+      if (d.x - d.radius < -MAP_W) { d.x = -MAP_W + d.radius; d.xspeed = 0; }
+      if (d.x + d.radius > MAP_W) { d.x = MAP_W - d.radius; d.xspeed = 0; }
+      if (d.y - d.radius < -MAP_H) { d.y = -MAP_H + d.radius; d.yspeed = 0; }
+      if (d.y + d.radius > MAP_H) { d.y = MAP_H - d.radius; d.yspeed = 0; }
     }
   }
 
   private checkGoals(): void {
     const ball = this.ball;
-    const inGoalY = ball.y > GOAL_Y_TOP && ball.y < GOAL_Y_BOT;
-
+    const inGoalY = ball.y > -GOAL_Y && ball.y < GOAL_Y;
     if (!inGoalY) return;
 
-    // Ball crossed left goal line → blue scores
-    if (ball.x < GOAL_LINE_LEFT) {
+    if (ball.x < -GOAL_LINE_X) {
       this.onGoal('blue');
-      return;
-    }
-
-    // Ball crossed right goal line → red scores
-    if (ball.x > GOAL_LINE_RIGHT) {
+    } else if (ball.x > GOAL_LINE_X) {
       this.onGoal('red');
-      return;
     }
   }
 
   resetPositions(): void {
-    this.ball.x = FIELD_WIDTH / 2;
-    this.ball.y = FIELD_HEIGHT / 2;
-    this.ball.xspeed = 0;
-    this.ball.yspeed = 0;
-    this.prevBallX = this.ball.x;
+    this.ball.x = 0; this.ball.y = 0;
+    this.ball.xspeed = 0; this.ball.yspeed = 0;
 
-    let redIndex = 0;
-    let blueIndex = 0;
-
+    let redIdx = 0, blueIdx = 0;
     for (const player of this.players.values()) {
-      const index = player.team === 'red' ? redIndex++ : blueIndex++;
+      const idx = player.team === 'red' ? redIdx++ : blueIdx++;
       const positions = TEAM_POSITIONS[player.team];
-      const pos = positions[index] ?? positions[0];
-
-      player.disc.x = pos.x;
-      player.disc.y = pos.y;
-      player.disc.xspeed = 0;
-      player.disc.yspeed = 0;
+      const pos = positions[idx] ?? positions[0];
+      player.disc.x = pos.x; player.disc.y = pos.y;
+      player.disc.xspeed = 0; player.disc.yspeed = 0;
       player.keyboard = { ...initialKeyboard };
     }
   }
 
   getSnapshot(): PhysicsSnapshot {
     const players: PhysicsSnapshot['players'] = {};
-
     for (const [id, player] of this.players.entries()) {
       players[id] = {
-        x: player.disc.x,
-        y: player.disc.y,
-        velocityX: player.disc.xspeed,
-        velocityY: player.disc.yspeed,
+        x: player.disc.x, y: player.disc.y,
+        velocityX: player.disc.xspeed, velocityY: player.disc.yspeed,
         spaceClicked: player.keyboard.spaceClicked,
       };
     }
-
     return {
       ball: {
-        x: this.ball.x,
-        y: this.ball.y,
-        velocityX: this.ball.xspeed,
-        velocityY: this.ball.yspeed,
+        x: this.ball.x, y: this.ball.y,
+        velocityX: this.ball.xspeed, velocityY: this.ball.yspeed,
       },
       players,
     };
