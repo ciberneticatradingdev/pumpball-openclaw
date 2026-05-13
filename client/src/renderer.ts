@@ -10,7 +10,7 @@ const PLAYER_R = 15;
 const BALL_R = 10;
 const GOAL_OFFSET = 80;
 const DOOR_W = 39;
-const BORDER = PLAYER_R * 2; // 40 — inner field offset
+const BORDER = 30; // inner field offset, matches server
 
 const TEAM_RED = '#ff3860';
 const TEAM_BLUE = '#00d1ff';

@@ -3,7 +3,7 @@
 
 const FIELD_WIDTH = 1000;
 const FIELD_HEIGHT = 550;
-const BORDER = 40; // Inner field offset (PLAYER_RADIUS * 2 visually)
+const BORDER = 30; // Inner field offset, matches renderer
 
 // Original Haxball values (Classic map scaled to our field)
 const PLAYER_RADIUS = 15;
@@ -296,25 +296,25 @@ export class ServerPhysics {
     if (disc.x < minX) {
       if (!isBall || !inGoalZone) {
         disc.x = minX;
-        disc.xspeed = Math.abs(disc.xspeed) * WALL_BCOEF;
+        disc.xspeed = isBall ? Math.abs(disc.xspeed) * WALL_BCOEF : 0;
       }
     }
     // Right wall
     if (disc.x > maxX) {
       if (!isBall || !inGoalZone) {
         disc.x = maxX;
-        disc.xspeed = -Math.abs(disc.xspeed) * WALL_BCOEF;
+        disc.xspeed = isBall ? -Math.abs(disc.xspeed) * WALL_BCOEF : 0;
       }
     }
     // Top wall
     if (disc.y < minY) {
       disc.y = minY;
-      disc.yspeed = Math.abs(disc.yspeed) * WALL_BCOEF;
+      disc.yspeed = isBall ? Math.abs(disc.yspeed) * WALL_BCOEF : 0;
     }
     // Bottom wall
     if (disc.y > maxY) {
       disc.y = maxY;
-      disc.yspeed = -Math.abs(disc.yspeed) * WALL_BCOEF;
+      disc.yspeed = isBall ? -Math.abs(disc.yspeed) * WALL_BCOEF : 0;
     }
   }
 
