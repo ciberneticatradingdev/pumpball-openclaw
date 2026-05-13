@@ -6,7 +6,7 @@ function lerp(a: number, b: number, t: number): number {
 
 const FIELD_W = 1000;
 const FIELD_H = 550;
-const PLAYER_R = 20;
+const PLAYER_R = 15;
 const BALL_R = 10;
 const GOAL_OFFSET = 80;
 const DOOR_W = 39;
