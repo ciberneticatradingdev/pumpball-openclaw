@@ -7,7 +7,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@pumpball/shared": "*",
     "socket.io-client": "^4.7.2"
   },
   "devDependencies": {
