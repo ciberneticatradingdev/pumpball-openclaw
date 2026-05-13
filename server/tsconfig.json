@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "lib": ["ES2020"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "paths": {
+      "@pumpball/shared": ["../shared/types.ts"]
+    }
+  },
+  "include": ["src/**/*"],
+  "ts-node": {
+    "paths": {
+      "@pumpball/shared": ["../shared/types.ts"]
+    }
+  }
+}
