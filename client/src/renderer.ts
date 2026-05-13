@@ -1,4 +1,4 @@
-import type { GameState, PlayerState } from '@pumpball/shared';
+import type { GameState, PlayerState } from './types';
 
 const FIELD_W = 1000;
 const FIELD_H = 550;

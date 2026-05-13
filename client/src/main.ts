@@ -1,7 +1,7 @@
 import './styles.css';
 import { io, Socket } from 'socket.io-client';
 import { Renderer } from './renderer';
-import type { GameState, RoomInfo, ChatMessage, Team, Keyboard } from '@pumpball/shared';
+import type { GameState, RoomInfo, ChatMessage, Team, Keyboard } from './types';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
