@@ -1,5 +1,9 @@
 import type { GameState, PlayerState } from './types';
 
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
 const FIELD_W = 1000;
 const FIELD_H = 550;
 const PLAYER_R = 20;
@@ -41,6 +45,27 @@ export class Renderer {
 
     this.canvas.width = Math.floor(FIELD_W * this.scale);
     this.canvas.height = Math.floor(FIELD_H * this.scale);
+  }
+
+  renderInterpolated(prev: GameState | null, target: GameState, alpha: number): void {
+    if (!prev) {
+      this.render(target);
+      return;
+    }
+
+    const ball = {
+      x: lerp(prev.ball.x, target.ball.x, alpha),
+      y: lerp(prev.ball.y, target.ball.y, alpha),
+    };
+
+    const prevMap = new Map(prev.players.map((p) => [p.id, p]));
+    const players: PlayerState[] = target.players.map((p) => {
+      const pp = prevMap.get(p.id);
+      if (!pp) return p;
+      return { ...p, x: lerp(pp.x, p.x, alpha), y: lerp(pp.y, p.y, alpha) };
+    });
+
+    this.render({ ...target, ball, players });
   }
 
   render(state: GameState) {

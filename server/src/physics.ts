@@ -11,9 +11,9 @@ const COLLISION_FILTER_DEFAULT = 1;
 const COLLISION_FILTER_BALL = 4;
 const COLLISION_FILTER_PLAYER = 8;
 
-const MIN_FORCE_APPLY_INTERVAL = 150;
+const MIN_FORCE_APPLY_INTERVAL = 16;
 const MOVEMENT_VELOCITY_CHANGE = 0.5;
-const PLAYER_MAX_VELOCITY = 3;
+const PLAYER_MAX_VELOCITY = 5;
 const PLAYER_POWER_KICK_RADIUS = 10;
 const BALL_FORCE_MULTIPLIER = 5;
 
@@ -82,6 +82,7 @@ export class ServerPhysics {
 
     this.ball = Bodies.circle(FIELD_WIDTH / 2, FIELD_HEIGHT / 2, BALL_RADIUS, {
       restitution: 0.9,
+      frictionAir: 0.01,
       collisionFilter: {
         category: COLLISION_FILTER_BALL,
         mask: COLLISION_FILTER_DEFAULT | COLLISION_FILTER_PLAYER,
@@ -103,6 +104,7 @@ export class ServerPhysics {
     const pos = positions[index] ?? positions[0];
 
     const body = Bodies.circle(pos.x, pos.y, PLAYER_RADIUS, {
+      frictionAir: 0.02,
       collisionFilter: {
         mask: COLLISION_FILTER_DEFAULT | COLLISION_FILTER_BALL | COLLISION_FILTER_PLAYER,
         category: COLLISION_FILTER_PLAYER,
@@ -201,10 +203,10 @@ export class ServerPhysics {
     // Player boundary enforcement
     for (const { body } of this.players.values()) {
       const pos = body.position;
-      const maxX = FIELD_WIDTH - PLAYER_RADIUS - 2;
-      const maxY = FIELD_HEIGHT - PLAYER_RADIUS - 2;
-      const minX = PLAYER_RADIUS + 2;
-      const minY = PLAYER_RADIUS + 2;
+      const maxX = FIELD_WIDTH - PLAYER_RADIUS * 2 - PLAYER_RADIUS;
+      const maxY = FIELD_HEIGHT - PLAYER_RADIUS * 2 - PLAYER_RADIUS;
+      const minX = PLAYER_RADIUS * 2 + PLAYER_RADIUS;
+      const minY = PLAYER_RADIUS * 2 + PLAYER_RADIUS;
 
       if (pos.x >= maxX) {
         Body.setPosition(body, { x: maxX, y: pos.y });
@@ -225,10 +227,10 @@ export class ServerPhysics {
     }
 
     // Ball boundary enforcement
-    const bMaxX = FIELD_WIDTH - BALL_RADIUS - 2;
-    const bMaxY = FIELD_HEIGHT - BALL_RADIUS - 2;
-    const bMinX = BALL_RADIUS + 2;
-    const bMinY = BALL_RADIUS + 2;
+    const bMaxX = FIELD_WIDTH - PLAYER_RADIUS * 2 - BALL_RADIUS;
+    const bMaxY = FIELD_HEIGHT - PLAYER_RADIUS * 2 - BALL_RADIUS;
+    const bMinX = PLAYER_RADIUS * 2 + BALL_RADIUS;
+    const bMinY = PLAYER_RADIUS * 2 + BALL_RADIUS;
 
     // Left wall (solid except in goal zone)
     if (ballPos.x <= bMinX && !inGoalY) {

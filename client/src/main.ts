@@ -14,6 +14,12 @@ let currentRoom: RoomInfo | null = null;
 let renderer: Renderer | null = null;
 let isInGame = false;
 
+// Interpolation state
+let prevState: GameState | null = null;
+let targetState: GameState | null = null;
+let lastStateTime: number = 0;
+const SERVER_TICK_MS = 50;
+
 // Keyboard state
 const keys: Keyboard = {
   rightClicked: false,
@@ -305,6 +311,8 @@ function setupSocket() {
 
   socket.on('gameStarted', () => {
     isInGame = true;
+    prevState = null;
+    targetState = null;
     document.dispatchEvent(new Event('gameStarted'));
     showScreen('game');
 
@@ -322,9 +330,11 @@ function setupSocket() {
   socket.on('gameState', (state: GameState) => {
     if (!isInGame) return;
 
-    renderer?.render(state);
+    prevState = targetState;
+    targetState = state;
+    lastStateTime = performance.now();
 
-    // Update score
+    // Update score and player list on every server tick
     $<HTMLElement>('#score-red').textContent = String(state.score.red);
     $<HTMLElement>('#score-blue').textContent = String(state.score.blue);
 
@@ -705,6 +715,18 @@ function setupEventListeners() {
   });
 }
 
+// ===== RENDER LOOP =====
+function startRenderLoop() {
+  function loop() {
+    if (isInGame && renderer && targetState) {
+      const alpha = Math.min((performance.now() - lastStateTime) / SERVER_TICK_MS, 1);
+      renderer.renderInterpolated(prevState, targetState, alpha);
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+
 // ===== INIT =====
 function init() {
   buildUI();
@@ -715,6 +737,7 @@ function init() {
   setupKeyboard();
   setupSocket();
   setupEventListeners();
+  startRenderLoop();
 
   // Set socket ID when available
   setTimeout(() => {
