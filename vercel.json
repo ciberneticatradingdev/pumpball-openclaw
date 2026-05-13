@@ -1,0 +1,6 @@
+{
+  "framework": null,
+  "installCommand": "npm install --workspace=client",
+  "buildCommand": "cd client && npx vite build",
+  "outputDirectory": "client/dist"
+}

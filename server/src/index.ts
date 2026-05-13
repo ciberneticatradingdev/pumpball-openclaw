@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { Room } from './room';
 
-const PORT = 3001;
+const PORT = parseInt(process.env.PORT || '3001', 10);
 
 const app = express();
 app.use(cors());
