@@ -7,6 +7,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@wallet-standard/app": "^1.1.0",
+    "@wallet-standard/features": "^1.1.0",
     "bs58": "^4.0.1",
     "socket.io-client": "^4.7.2"
   },

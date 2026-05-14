@@ -1,5 +1,7 @@
-// Lightweight Solana wallet integration
-// Supports: Phantom, Solflare, Backpack, any injected provider
+// PumpBall Wallet — uses Wallet Standard API
+// Auto-discovers all installed Solana wallets
+import { getWallets } from '@wallet-standard/app';
+import type { Wallet, WalletWithFeatures } from '@wallet-standard/base';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
@@ -22,12 +24,10 @@ type AuthState = {
   user: UserProfile | null;
 };
 
-export type WalletInfo = {
+export type DetectedWallet = {
   name: string;
   icon: string;
-  installed: boolean;
-  provider: any;
-  url: string; // install URL
+  wallet: Wallet;
 };
 
 const state: AuthState = {
@@ -42,125 +42,175 @@ const listeners: AuthListener[] = [];
 export function onAuthChange(fn: AuthListener) { listeners.push(fn); }
 function notify() { listeners.forEach(fn => fn({ ...state })); }
 
-// Detect available wallets
-export function getAvailableWallets(): WalletInfo[] {
-  const wallets: WalletInfo[] = [];
-  const w = window as any;
+// Discover all installed Solana wallets via Wallet Standard
+export function getDetectedWallets(): DetectedWallet[] {
+  const { get } = getWallets();
+  const all = get();
 
-  // Phantom
-  const phantom = w.phantom?.solana || (w.solana?.isPhantom ? w.solana : null);
-  wallets.push({
-    name: 'Phantom',
-    icon: '👻',
-    installed: !!phantom,
-    provider: phantom,
-    url: 'https://phantom.app/',
-  });
-
-  // Solflare
-  const solflare = w.solflare || (w.solana?.isSolflare ? w.solana : null);
-  wallets.push({
-    name: 'Solflare',
-    icon: '🔆',
-    installed: !!solflare,
-    provider: solflare,
-    url: 'https://solflare.com/',
-  });
-
-  // Backpack
-  const backpack = w.backpack || w.xnft?.solana;
-  wallets.push({
-    name: 'Backpack',
-    icon: '🎒',
-    installed: !!backpack,
-    provider: backpack,
-    url: 'https://backpack.app/',
-  });
-
-  return wallets;
+  return all
+    .filter(w => {
+      // Only Solana wallets
+      return w.chains?.some((c: string) => c.startsWith('solana:'));
+    })
+    .map(w => ({
+      name: w.name,
+      icon: typeof w.icon === 'string' ? w.icon : (w.icon as any)?.[0] || '💰',
+      wallet: w,
+    }));
 }
 
-export async function connectWithProvider(provider: any): Promise<boolean> {
+export async function connectWithWallet(wallet: Wallet): Promise<boolean> {
+  try {
+    const features = wallet.features as any;
+
+    // Connect
+    const connectFeature = features['standard:connect'];
+    if (!connectFeature) {
+      console.error('Wallet does not support connect');
+      return false;
+    }
+
+    const connectResult = await connectFeature.connect();
+    const account = connectResult.accounts?.[0];
+    if (!account) {
+      console.error('No account returned');
+      return false;
+    }
+
+    // Get public key as base58
+    const pubkeyBytes = account.publicKey;
+    const walletAddress = account.address;
+
+    state.wallet = walletAddress;
+
+    // Try server auth
+    try {
+      const nonceResp = await fetch(`${SERVER_URL}/api/auth/nonce`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet: walletAddress }),
+      });
+
+      if (nonceResp.ok) {
+        const { nonce } = await nonceResp.json();
+
+        // Sign message
+        const signFeature = features['solana:signMessage'] || features['standard:signMessage'];
+        if (signFeature) {
+          const messageBytes = new TextEncoder().encode(nonce);
+          const signResult = await signFeature.signMessage({
+            account,
+            message: messageBytes,
+          });
+
+          const signature = Array.from(signResult[0]?.signature || signResult?.signature || []);
+
+          // Verify
+          const verifyResp = await fetch(`${SERVER_URL}/api/auth/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ wallet: walletAddress, signature }),
+          });
+
+          if (verifyResp.ok) {
+            const { token, user } = await verifyResp.json();
+            state.connected = true;
+            state.token = token;
+            state.user = user;
+            localStorage.setItem('pb_token', token);
+            notify();
+            return true;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Server auth unavailable, using guest mode:', e);
+    }
+
+    // Fallback: connected without server auth
+    state.connected = true;
+    state.user = {
+      id: '',
+      wallet_address: walletAddress,
+      username: 'Player_' + walletAddress.slice(0, 4),
+      avatar_url: null,
+      xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
+    };
+    notify();
+    return true;
+  } catch (err) {
+    console.error('Wallet connect error:', err);
+    return false;
+  }
+}
+
+// Legacy fallback for wallets that don't implement wallet-standard
+export async function connectLegacy(providerName: string): Promise<boolean> {
+  const w = window as any;
+  let provider: any = null;
+
+  if (providerName === 'phantom') {
+    provider = w.phantom?.solana || (w.solana?.isPhantom ? w.solana : null);
+  } else if (providerName === 'solflare') {
+    provider = w.solflare;
+  } else if (providerName === 'backpack') {
+    provider = w.backpack;
+  }
+
   if (!provider) return false;
 
   try {
     const resp = await provider.connect();
-    const wallet = resp.publicKey.toString();
-    state.wallet = wallet;
+    const walletAddress = resp.publicKey.toString();
+    state.wallet = walletAddress;
 
-    // Get nonce from server
-    let nonceResp: Response;
+    // Try server auth
     try {
-      nonceResp = await fetch(`${SERVER_URL}/api/auth/nonce`, {
+      const nonceResp = await fetch(`${SERVER_URL}/api/auth/nonce`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wallet }),
+        body: JSON.stringify({ wallet: walletAddress }),
       });
-    } catch {
-      // Server unreachable — connect without auth (guest mode with wallet)
-      state.connected = true;
-      state.user = {
-        id: '',
-        wallet_address: wallet,
-        username: 'Player_' + wallet.slice(0, 4),
-        avatar_url: null,
-        xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
-      };
-      notify();
-      return true;
+
+      if (nonceResp.ok) {
+        const { nonce } = await nonceResp.json();
+        const encoded = new TextEncoder().encode(nonce);
+        const signed = await provider.signMessage(encoded);
+        const signature = Array.from(signed.signature || signed);
+
+        const verifyResp = await fetch(`${SERVER_URL}/api/auth/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ wallet: walletAddress, signature }),
+        });
+
+        if (verifyResp.ok) {
+          const { token, user } = await verifyResp.json();
+          state.connected = true;
+          state.token = token;
+          state.user = user;
+          localStorage.setItem('pb_token', token);
+          notify();
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('Server auth unavailable:', e);
     }
 
-    if (!nonceResp.ok) {
-      // Server error — fallback to guest mode
-      state.connected = true;
-      state.user = {
-        id: '',
-        wallet_address: wallet,
-        username: 'Player_' + wallet.slice(0, 4),
-        avatar_url: null,
-        xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
-      };
-      notify();
-      return true;
-    }
-
-    const { nonce } = await nonceResp.json();
-
-    // Sign the nonce
-    const encoded = new TextEncoder().encode(nonce);
-    const signedMessage = await provider.signMessage(encoded, 'utf8');
-    const signature = Array.from(signedMessage.signature);
-
-    // Verify with server
-    const verifyResp = await fetch(`${SERVER_URL}/api/auth/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wallet, signature }),
-    });
-
-    if (!verifyResp.ok) {
-      // Verification failed but wallet is connected
-      state.connected = true;
-      state.user = {
-        id: '',
-        wallet_address: wallet,
-        username: 'Player_' + wallet.slice(0, 4),
-        avatar_url: null,
-        xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
-      };
-      notify();
-      return true;
-    }
-
-    const { token, user } = await verifyResp.json();
+    // Fallback guest mode
     state.connected = true;
-    state.token = token;
-    state.user = user;
-    localStorage.setItem('pb_token', token);
+    state.user = {
+      id: '',
+      wallet_address: walletAddress,
+      username: 'Player_' + walletAddress.slice(0, 4),
+      avatar_url: null,
+      xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
+    };
     notify();
     return true;
   } catch (err) {
-    console.error('Wallet connect failed:', err);
+    console.error('Legacy connect error:', err);
     return false;
   }
 }
@@ -176,27 +226,22 @@ export async function disconnectWallet(): Promise<void> {
 
 export async function restoreSession(): Promise<boolean> {
   if (!state.token) return false;
-
   try {
     const resp = await fetch(`${SERVER_URL}/api/profile`, {
       headers: { Authorization: `Bearer ${state.token}` },
     });
-
     if (!resp.ok) {
       localStorage.removeItem('pb_token');
       state.token = null;
       return false;
     }
-
     const { user } = await resp.json();
     state.connected = true;
     state.user = user;
     state.wallet = user.wallet_address;
     notify();
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 export async function updateProfile(data: { username?: string }): Promise<UserProfile | null> {

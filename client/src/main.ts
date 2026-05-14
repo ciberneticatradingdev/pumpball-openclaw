@@ -2,7 +2,7 @@ import './styles.css';
 import { io, Socket } from 'socket.io-client';
 import { Renderer } from './renderer';
 import type { GameState, RoomInfo, ChatMessage, Team, Keyboard } from './types';
-import { connectWithProvider, disconnectWallet, restoreSession, updateProfile, uploadAvatar, onAuthChange, getAuthState, getAvatarUrl, getAvailableWallets, type UserProfile } from './wallet';
+import { connectWithWallet, connectLegacy, disconnectWallet, restoreSession, updateProfile, uploadAvatar, onAuthChange, getAuthState, getAvatarUrl, getDetectedWallets, type UserProfile } from './wallet';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
@@ -855,38 +855,104 @@ function setupEventListeners() {
   function showWalletModal() {
     const modal = document.getElementById('wallet-modal')!;
     const list = document.getElementById('wallet-list')!;
-    const wallets = getAvailableWallets();
+
+    // Get wallets from Wallet Standard
+    const detected = getDetectedWallets();
+
+    // Also check legacy providers
+    const w = window as any;
+    const legacyWallets: { name: string; icon: string; key: string; installed: boolean; url: string }[] = [
+      { name: 'Phantom', icon: '👻', key: 'phantom', installed: !!(w.phantom?.solana || w.solana?.isPhantom), url: 'https://phantom.app/' },
+      { name: 'Solflare', icon: '🔆', key: 'solflare', installed: !!w.solflare, url: 'https://solflare.com/' },
+      { name: 'Backpack', icon: '🎒', key: 'backpack', installed: !!w.backpack, url: 'https://backpack.app/' },
+    ];
 
     list.innerHTML = '';
-    wallets.forEach(w => {
+
+    // Show Wallet Standard detected wallets first
+    const shownNames = new Set<string>();
+    detected.forEach(dw => {
+      shownNames.add(dw.name.toLowerCase());
       const btn = document.createElement('button');
-      btn.className = 'wallet-option' + (w.installed ? '' : ' not-installed');
-      btn.innerHTML = `
-        <div class="wallet-icon">${w.icon}</div>
-        <span class="wallet-name">${w.name}</span>
-        <span class="wallet-tag">${w.installed ? 'DETECTED' : 'INSTALL'}</span>
-      `;
+      btn.className = 'wallet-option';
+
+      const iconEl = document.createElement('div');
+      iconEl.className = 'wallet-icon';
+      // Use wallet icon (could be data URL)
+      if (dw.icon.startsWith('data:') || dw.icon.startsWith('http')) {
+        iconEl.innerHTML = '<img src="' + dw.icon + '" style="width:24px;height:24px;border-radius:4px" />';
+      } else {
+        iconEl.textContent = dw.icon;
+      }
+
+      btn.appendChild(iconEl);
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'wallet-name';
+      nameEl.textContent = dw.name;
+      btn.appendChild(nameEl);
+
+      const tagEl = document.createElement('span');
+      tagEl.className = 'wallet-tag';
+      tagEl.textContent = 'DETECTED';
+      btn.appendChild(tagEl);
+
       btn.addEventListener('click', async () => {
-        if (!w.installed) {
-          window.open(w.url, '_blank');
-          return;
-        }
         modal.classList.remove('show');
-        toast('Connecting to ' + w.name + '...', 'info');
-        const ok = await connectWithProvider(w.provider);
+        toast('Connecting to ' + dw.name + '...', 'info');
+        const ok = await connectWithWallet(dw.wallet);
         if (ok) {
-          toast('Connected to ' + w.name + '!', 'success');
+          toast('Connected to ' + dw.name + '!', 'success');
           const auth = getAuthState();
           if (auth.user) {
             $<HTMLInputElement>('#player-name-input').value = auth.user.username;
             myName = auth.user.username;
           }
         } else {
-          toast('Connection failed or rejected', 'error');
+          toast('Connection rejected or failed', 'error');
         }
       });
+
       list.appendChild(btn);
     });
+
+    // Show legacy wallets that weren't in wallet-standard
+    legacyWallets.forEach(lw => {
+      if (shownNames.has(lw.name.toLowerCase())) return;
+
+      const btn = document.createElement('button');
+      btn.className = 'wallet-option' + (lw.installed ? '' : ' not-installed');
+      btn.innerHTML = '<div class="wallet-icon">' + lw.icon + '</div>'
+        + '<span class="wallet-name">' + lw.name + '</span>'
+        + '<span class="wallet-tag">' + (lw.installed ? 'DETECTED' : 'INSTALL') + '</span>';
+
+      btn.addEventListener('click', async () => {
+        if (!lw.installed) {
+          window.open(lw.url, '_blank');
+          return;
+        }
+        modal.classList.remove('show');
+        toast('Connecting to ' + lw.name + '...', 'info');
+        const ok = await connectLegacy(lw.key);
+        if (ok) {
+          toast('Connected to ' + lw.name + '!', 'success');
+          const auth = getAuthState();
+          if (auth.user) {
+            $<HTMLInputElement>('#player-name-input').value = auth.user.username;
+            myName = auth.user.username;
+          }
+        } else {
+          toast('Connection rejected or failed', 'error');
+        }
+      });
+
+      list.appendChild(btn);
+    });
+
+    // If nothing detected at all
+    if (list.children.length === 0) {
+      list.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:16px;font-size:12px">No wallets detected.<br>Install <a href="https://phantom.app" target="_blank" style="color:var(--accent)">Phantom</a> or <a href="https://solflare.com" target="_blank" style="color:var(--accent)">Solflare</a></div>';
+    }
 
     modal.classList.add('show');
   }
