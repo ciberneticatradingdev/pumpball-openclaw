@@ -796,6 +796,31 @@ function buildUI() {
       </div>
     </div>
 
+    <!-- Welcome / Onboarding Modal -->
+    <div id="welcome-modal" class="welcome-modal-overlay">
+      <div class="welcome-modal">
+        <div class="welcome-header">
+          <div class="welcome-title">💊 WELCOME TO PUMPBALL</div>
+          <div class="welcome-sub">Set up your player profile</div>
+        </div>
+        <div class="welcome-avatar-section">
+          <div class="welcome-avatar-wrapper" id="welcome-avatar-wrapper">
+            <div class="welcome-avatar" id="welcome-avatar">💊</div>
+            <div class="welcome-avatar-overlay">📷</div>
+            <input type="file" id="welcome-avatar-input" accept="image/*" style="display:none" />
+          </div>
+          <div class="welcome-avatar-label">Click to upload your photo</div>
+        </div>
+        <div class="welcome-form">
+          <label>USERNAME</label>
+          <input type="text" id="welcome-username-input" maxlength="20" />
+        </div>
+        <div class="welcome-wallet">Your wallet: <span id="welcome-wallet-addr">---</span></div>
+        <button id="welcome-play-btn" class="btn btn-primary welcome-play-btn">LET'S PLAY</button>
+        <button id="welcome-skip-btn" class="welcome-skip-btn">Skip for now</button>
+      </div>
+    </div>
+
     <!-- Wallet Selector Modal -->
     <div id="wallet-modal" class="wallet-modal-overlay">
       <div class="wallet-modal">
@@ -851,6 +876,100 @@ function setupEventListeners() {
   $<HTMLButtonElement>('#join-room-btn').addEventListener('click', joinRoom);
   $<HTMLInputElement>('#join-code-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
 
+  // === Welcome / Onboarding Modal (first-time wallet connect) ===
+  let welcomePendingFile: File | null = null;
+  let welcomePendingDataUrl: string | null = null;
+
+  function showWelcomeModal() {
+    const modal = document.getElementById('welcome-modal');
+    if (!modal) return;
+    const auth = getAuthState();
+    welcomePendingFile = null;
+    welcomePendingDataUrl = null;
+
+    const usernameInput = document.getElementById('welcome-username-input') as HTMLInputElement | null;
+    if (usernameInput) usernameInput.value = auth.user?.username || '';
+
+    const walletAddrEl = document.getElementById('welcome-wallet-addr');
+    if (walletAddrEl && auth.wallet) {
+      walletAddrEl.textContent = auth.wallet.slice(0, 4) + '...' + auth.wallet.slice(-4);
+    }
+
+    const avatarEl = document.getElementById('welcome-avatar');
+    if (avatarEl) {
+      if (auth.user?.avatar_data) {
+        avatarEl.innerHTML = '<img src="' + auth.user.avatar_data + '" />';
+      } else {
+        avatarEl.textContent = '💊';
+      }
+    }
+
+    const fileInput = document.getElementById('welcome-avatar-input') as HTMLInputElement | null;
+    if (fileInput) fileInput.value = '';
+
+    modal.classList.add('show');
+  }
+
+  function hideWelcomeModal() {
+    const modal = document.getElementById('welcome-modal');
+    if (modal) modal.classList.remove('show');
+    welcomePendingFile = null;
+    welcomePendingDataUrl = null;
+  }
+
+  const welcomeAvatarWrapper = document.getElementById('welcome-avatar-wrapper');
+  const welcomeAvatarInput = document.getElementById('welcome-avatar-input') as HTMLInputElement | null;
+  const welcomeAvatar = document.getElementById('welcome-avatar');
+  if (welcomeAvatarWrapper && welcomeAvatarInput) {
+    welcomeAvatarWrapper.addEventListener('click', () => welcomeAvatarInput.click());
+    welcomeAvatarInput.addEventListener('change', () => {
+      const file = welcomeAvatarInput.files?.[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { toast('Max 2MB', 'error'); return; }
+      welcomePendingFile = file;
+      const reader = new FileReader();
+      reader.onload = () => {
+        welcomePendingDataUrl = reader.result as string;
+        if (welcomeAvatar) welcomeAvatar.innerHTML = '<img src="' + welcomePendingDataUrl + '" />';
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const welcomePlayBtn = document.getElementById('welcome-play-btn');
+  if (welcomePlayBtn) {
+    welcomePlayBtn.addEventListener('click', async () => {
+      const input = document.getElementById('welcome-username-input') as HTMLInputElement | null;
+      const username = input?.value.trim() || '';
+      welcomePlayBtn.setAttribute('disabled', 'true');
+      try {
+        if (username) {
+          const u = await updateProfile({ username });
+          if (u) {
+            myName = u.username;
+            $<HTMLInputElement>('#player-name-input').value = u.username;
+          }
+        }
+        if (welcomePendingFile) {
+          const u = await uploadAvatar(welcomePendingFile);
+          if (!u) toast('Avatar upload failed', 'error');
+        }
+        toast('Profile ready!', 'success');
+      } finally {
+        welcomePlayBtn.removeAttribute('disabled');
+        hideWelcomeModal();
+      }
+    });
+  }
+
+  const welcomeSkipBtn = document.getElementById('welcome-skip-btn');
+  if (welcomeSkipBtn) welcomeSkipBtn.addEventListener('click', () => hideWelcomeModal());
+
+  const welcomeModalEl = document.getElementById('welcome-modal');
+  if (welcomeModalEl) welcomeModalEl.addEventListener('click', (e) => {
+    if (e.target === welcomeModalEl) hideWelcomeModal();
+  });
+
   // === Wallet Connect (with selector modal) ===
   function showWalletModal() {
     const modal = document.getElementById('wallet-modal')!;
@@ -900,14 +1019,15 @@ function setupEventListeners() {
       btn.addEventListener('click', async () => {
         modal.classList.remove('show');
         toast('Connecting to ' + dw.name + '...', 'info');
-        const ok = await connectWithWallet(dw.wallet);
-        if (ok) {
+        const result = await connectWithWallet(dw.wallet);
+        if (result.success) {
           toast('Connected to ' + dw.name + '!', 'success');
           const auth = getAuthState();
           if (auth.user) {
             $<HTMLInputElement>('#player-name-input').value = auth.user.username;
             myName = auth.user.username;
           }
+          if (result.isNewUser) showWelcomeModal();
         } else {
           toast('Connection rejected or failed', 'error');
         }
@@ -933,14 +1053,15 @@ function setupEventListeners() {
         }
         modal.classList.remove('show');
         toast('Connecting to ' + lw.name + '...', 'info');
-        const ok = await connectLegacy(lw.key);
-        if (ok) {
+        const result = await connectLegacy(lw.key);
+        if (result.success) {
           toast('Connected to ' + lw.name + '!', 'success');
           const auth = getAuthState();
           if (auth.user) {
             $<HTMLInputElement>('#player-name-input').value = auth.user.username;
             myName = auth.user.username;
           }
+          if (result.isNewUser) showWelcomeModal();
         } else {
           toast('Connection rejected or failed', 'error');
         }
