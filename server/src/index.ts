@@ -32,16 +32,28 @@ type Keyboard = {
   spaceClicked: boolean;
 };
 
-// Codes of the 6 always-on persistent matches shown on the landing page
-const PERSISTENT_CODES = ['PUMP-1', 'PUMP-2', 'PUMP-3', 'PUMP-4', 'PUMP-5', 'PUMP-6'];
+// Persistent rooms: 3x 1v1, 3x 2v2, 3x 4v4
+type GameMode = '1v1' | '2v2' | '4v4';
+const PERSISTENT_ROOMS: Array<{ code: string; mode: GameMode }> = [
+  { code: 'PUMP-1', mode: '1v1' },
+  { code: 'PUMP-2', mode: '1v1' },
+  { code: 'PUMP-3', mode: '1v1' },
+  { code: 'PUMP-4', mode: '2v2' },
+  { code: 'PUMP-5', mode: '2v2' },
+  { code: 'PUMP-6', mode: '2v2' },
+  { code: 'PUMP-7', mode: '4v4' },
+  { code: 'PUMP-8', mode: '4v4' },
+  { code: 'PUMP-9', mode: '4v4' },
+];
+const PERSISTENT_CODES = PERSISTENT_ROOMS.map(r => r.code);
 
 function createPersistentRooms() {
-  for (const code of PERSISTENT_CODES) {
+  for (const { code, mode } of PERSISTENT_ROOMS) {
     if (rooms.has(code)) continue;
-    const room = new Room(code, '', '', io, { persistent: true });
+    const room = new Room(code, '', '', io, { persistent: true, mode });
     rooms.set(code, room);
   }
-  console.log(`[+] ${PERSISTENT_CODES.length} persistent rooms ready: ${PERSISTENT_CODES.join(', ')}`);
+  console.log(`[+] ${PERSISTENT_ROOMS.length} persistent rooms ready: ${PERSISTENT_CODES.join(', ')}`);
 }
 
 function generateRoomCode(): string {
@@ -71,7 +83,7 @@ io.on('connection', (socket) => {
     } else {
       playerName = 'Player';
     }
-    const room = new Room(code, socket.id, playerName, io);
+    const room = new Room(code, socket.id, playerName, io, { mode: '4v4' });
     rooms.set(code, room);
     playerRooms.set(socket.id, code);
     socket.join(room.roomKey);

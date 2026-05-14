@@ -1,5 +1,6 @@
 import { Server } from 'socket.io';
-import { ServerPhysics } from './physics';
+import { ServerPhysics, getFieldConfig } from './physics';
+import type { GameMode, FieldConfig } from './physics';
 
 type Team = 'red' | 'blue' | 'spectator';
 
@@ -24,6 +25,7 @@ type RoomInfo = {
   hostId: string;
   status: 'waiting' | 'playing' | 'finished';
   score: { red: number; blue: number };
+  mode: GameMode;
 };
 
 type GameState = {
@@ -47,16 +49,26 @@ type GameState = {
 
 const PHYSICS_TICK = 1000 / 60;
 const BROADCAST_TICK = 1000 / 20;
-const MAX_PLAYERS = 8;
-const MAX_TEAM_SIZE = 3;
 const SCORE_LIMIT = 5;
 const MATCH_DURATION = 300;
 const OVERTIME_DURATION = 60;
+
+function getMaxTeamSize(mode: GameMode): number {
+  return mode === '1v1' ? 1 : mode === '2v2' ? 2 : 4;
+}
+
+function getMaxPlayers(mode: GameMode): number {
+  return getMaxTeamSize(mode) * 2;
+}
 
 export class Room {
   public code: string;
   public hostId: string;
   public persistent: boolean;
+  public mode: GameMode;
+  public maxTeamSize: number;
+  private maxPlayers: number;
+  private fieldConfig: FieldConfig;
   private status: 'waiting' | 'playing' | 'finished' = 'waiting';
   private players: Map<string, RoomPlayerData> = new Map();
   private score = { red: 0, blue: 0 };
@@ -74,12 +86,16 @@ export class Room {
     hostId: string,
     hostName: string,
     io: Server,
-    options: { persistent?: boolean } = {},
+    options: { persistent?: boolean; mode?: GameMode } = {},
   ) {
     this.code = code;
     this.hostId = hostId;
     this.io = io;
     this.persistent = !!options.persistent;
+    this.mode = options.mode || '4v4';
+    this.maxTeamSize = getMaxTeamSize(this.mode);
+    this.maxPlayers = getMaxPlayers(this.mode);
+    this.fieldConfig = getFieldConfig(this.mode);
     if (hostId) {
       this.players.set(hostId, { id: hostId, name: hostName, team: 'spectator' });
     }
@@ -92,7 +108,7 @@ export class Room {
   addPlayer(id: string, name: string, avatarData?: string): boolean {
     // Spectators can always join (unlimited). Only block if active player slots are full.
     const nonSpectators = Array.from(this.players.values()).filter(p => p.team !== 'spectator').length;
-    if (nonSpectators >= MAX_PLAYERS && this.status === 'waiting') {
+    if (nonSpectators >= this.maxPlayers && this.status === 'waiting') {
       // Even then, they can still join as spectator
     }
     this.players.set(id, { id, name, team: 'spectator', avatarData });
@@ -141,7 +157,7 @@ export class Room {
       const teamCount = Array.from(this.players.values()).filter(
         (p) => p.team === team && p.id !== id,
       ).length;
-      if (teamCount >= MAX_TEAM_SIZE) return;
+      if (teamCount >= this.maxTeamSize) return;
     }
 
     player.team = team;
@@ -168,7 +184,7 @@ export class Room {
     this.timeLeft = MATCH_DURATION;
     this.overtime = false;
 
-    this.physics = new ServerPhysics((team) => this.handleGoal(team));
+    this.physics = new ServerPhysics(this.fieldConfig, (team) => this.handleGoal(team));
 
     let redIdx = 0;
     let blueIdx = 0;
@@ -346,6 +362,7 @@ export class Room {
       hostId: this.hostId,
       status: this.status,
       score: { ...this.score },
+      mode: this.mode,
     };
   }
 
@@ -359,6 +376,8 @@ export class Room {
       bluePlayers: ps.filter((p) => p.team === 'blue').length,
       status: this.status,
       score: { ...this.score },
+      mode: this.mode,
+      maxPlayers: this.maxPlayers,
     };
   }
 
@@ -369,7 +388,7 @@ export class Room {
   isFull(): boolean {
     // Only counts non-spectator players; spectators are unlimited
     const nonSpectators = Array.from(this.players.values()).filter(p => p.team !== 'spectator').length;
-    return nonSpectators >= MAX_PLAYERS;
+    return nonSpectators >= this.maxPlayers;
   }
 
   getPlayerAvatars(): Array<{ id: string; avatarData: string }> {

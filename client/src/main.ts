@@ -1,7 +1,7 @@
 import './styles.css';
 import { io, Socket } from 'socket.io-client';
 import { Renderer } from './renderer';
-import type { GameState, RoomInfo, ChatMessage, Team, Keyboard } from './types';
+import type { GameState, RoomInfo, ChatMessage, Team, Keyboard, GameMode } from './types';
 import { connectWithWallet, connectLegacy, disconnectWallet, restoreSession, updateProfile, uploadAvatar, onAuthChange, getAuthState, getDetectedWallets, type UserProfile } from './wallet';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
@@ -141,7 +141,7 @@ function renderSkeletonCards() {
   const grid = document.getElementById('matches-grid');
   if (!grid) return;
   grid.innerHTML = '';
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 9; i++) {
     const card = document.createElement('div');
     card.className = 'skeleton-card';
     card.innerHTML = `
@@ -164,52 +164,73 @@ function renderMatchCards(matches: any[]) {
   if (!grid) return;
   grid.innerHTML = '';
 
-  matches.forEach((m: any, i: number) => {
-    const card = document.createElement('div');
-    card.className = 'match-card';
-    const statusClass = m.status === 'playing' ? 'playing' : 'waiting';
-    const statusText = m.status === 'playing' ? '● LIVE' : 'OPEN';
+  // Group by mode
+  const modeOrder: GameMode[] = ['1v1', '2v2', '4v4'];
+  const grouped: Record<string, any[]> = { '1v1': [], '2v2': [], '4v4': [] };
+  for (const m of matches) {
+    const mode = m.mode || '4v4';
+    if (!grouped[mode]) grouped[mode] = [];
+    grouped[mode].push(m);
+  }
 
-    card.innerHTML = `
-      <div class="match-card-header">
-        <span class="match-id">MATCH #${i + 1}</span>
-        <span class="match-status ${statusClass}">${statusText}</span>
-      </div>
-      ${m.status === 'playing' ? `
-        <div class="match-score-live">
-          <span class="s-red">${m.score.red}</span>
-          <span style="color:var(--text-muted)"> — </span>
-          <span class="s-blue">${m.score.blue}</span>
-        </div>
-      ` : ''}
-      <div class="match-card-teams">
-        <div class="match-team">
-          <span class="team-label red">MINT</span>
-          <span class="team-count">${m.redPlayers}</span>
-        </div>
-        <span class="match-vs">VS</span>
-        <div class="match-team">
-          <span class="team-label blue">WHITE</span>
-          <span class="team-count">${m.bluePlayers}</span>
-        </div>
-      </div>
-      <div class="match-card-footer">
-        <span>3v3 · FREE</span>
-        <span>👥 ${m.players}/8</span>
-      </div>
-    `;
+  for (const mode of modeOrder) {
+    const modeMatches = grouped[mode];
+    if (!modeMatches || modeMatches.length === 0) continue;
 
-    card.addEventListener('click', () => {
-      const name = getPlayerName();
-      myName = name;
-      const auth = getAuthState();
-      socket.emit('joinRoom', { roomCode: m.code, name, avatarData: auth.user?.avatar_data || undefined }, (success: boolean, error?: string) => {
-        if (!success) toast(error || 'Could not join', 'error');
+    // Mode group header
+    const header = document.createElement('div');
+    header.className = 'mode-group-header';
+    header.textContent = `${mode}`;
+    grid.appendChild(header);
+
+    modeMatches.forEach((m: any, i: number) => {
+      const card = document.createElement('div');
+      card.className = 'match-card';
+      const statusClass = m.status === 'playing' ? 'playing' : 'waiting';
+      const statusText = m.status === 'playing' ? '● LIVE' : 'OPEN';
+      const maxPlayers = m.maxPlayers || 8;
+
+      card.innerHTML = `
+        <div class="match-card-header">
+          <span class="match-id">${m.code}</span>
+          <span class="match-status ${statusClass}">${statusText}</span>
+        </div>
+        ${m.status === 'playing' ? `
+          <div class="match-score-live">
+            <span class="s-red">${m.score.red}</span>
+            <span style="color:var(--text-muted)"> — </span>
+            <span class="s-blue">${m.score.blue}</span>
+          </div>
+        ` : ''}
+        <div class="match-card-teams">
+          <div class="match-team">
+            <span class="team-label red">MINT</span>
+            <span class="team-count">${m.redPlayers}</span>
+          </div>
+          <span class="match-vs">VS</span>
+          <div class="match-team">
+            <span class="team-label blue">WHITE</span>
+            <span class="team-count">${m.bluePlayers}</span>
+          </div>
+        </div>
+        <div class="match-card-footer">
+          <span>${m.mode || '4v4'} · FREE</span>
+          <span>👥 ${m.players}/${maxPlayers}</span>
+        </div>
+      `;
+
+      card.addEventListener('click', () => {
+        const name = getPlayerName();
+        myName = name;
+        const auth = getAuthState();
+        socket.emit('joinRoom', { roomCode: m.code, name, avatarData: auth.user?.avatar_data || undefined }, (success: boolean, error?: string) => {
+          if (!success) toast(error || 'Could not join', 'error');
+        });
       });
-    });
 
-    grid.appendChild(card);
-  });
+      grid.appendChild(card);
+    });
+  }
 }
 
 // ===== FORMAT TIME =====
@@ -223,8 +244,10 @@ function formatTime(seconds: number): string {
 function renderRoomInfo(info: RoomInfo) {
   currentRoom = info;
   const isHost = info.hostId === myId;
+  const mode = info.mode || '4v4';
+  const teamSlotCount = mode === '1v1' ? 1 : mode === '2v2' ? 2 : 4;
 
-  $<HTMLElement>('#room-code-value').textContent = info.code;
+  $<HTMLElement>('#room-code-value').textContent = `${info.code} (${mode})`;
 
   const startBtn = $<HTMLButtonElement>('#start-game-btn');
   startBtn.style.display = isHost ? 'block' : 'none';
@@ -238,7 +261,7 @@ function renderRoomInfo(info: RoomInfo) {
   const spectators = info.players.filter(p => p.team === 'spectator');
 
   redSlots.innerHTML = '';
-  [0, 1, 2].forEach(i => {
+  for (let i = 0; i < teamSlotCount; i++) {
     const slot = document.createElement('div');
     const p = redPlayers[i];
     if (p) {
@@ -249,10 +272,10 @@ function renderRoomInfo(info: RoomInfo) {
       slot.textContent = 'empty slot';
     }
     redSlots.appendChild(slot);
-  });
+  }
 
   blueSlots.innerHTML = '';
-  [0, 1, 2].forEach(i => {
+  for (let i = 0; i < teamSlotCount; i++) {
     const slot = document.createElement('div');
     const p = bluePlayers[i];
     if (p) {
@@ -263,7 +286,7 @@ function renderRoomInfo(info: RoomInfo) {
       slot.textContent = 'empty slot';
     }
     blueSlots.appendChild(slot);
-  });
+  }
 
   spectatorList.innerHTML = '';
   spectators.forEach(p => {
@@ -388,11 +411,15 @@ function setupSocket() {
   socket.on('roomJoined', (info: RoomInfo) => {
     currentRoom = info;
     stopMatchesPolling();
+    // Set field config based on room mode
+    if (renderer && info.mode) {
+      renderer.setFieldConfig(info.mode);
+    }
     showScreen('room');
     renderRoomInfo(info);
     const roomChat = $<HTMLElement>('#room-chat-messages');
     roomChat.innerHTML = '';
-    addSystemMessage(roomChat, `Joined room ${info.code}`);
+    addSystemMessage(roomChat, `Joined room ${info.code} (${info.mode || '4v4'})`);
   });
 
   // Avatar events — receive once per player, cache in renderer
@@ -425,6 +452,10 @@ function setupSocket() {
     document.dispatchEvent(new Event('gameStarted'));
     showScreen('game');
 
+    // Ensure renderer has correct field config for this room's mode
+    if (renderer && currentRoom?.mode) {
+      renderer.setFieldConfig(currentRoom.mode);
+    }
     if (renderer) renderer.resize();
 
     // Update topbar
@@ -604,8 +635,8 @@ function buildUI() {
 
         <section class="matches-section">
           <div class="section-heading">
-            <h2>Live Matches · 3v3</h2>
-            <span class="heading-sub">Free to play</span>
+            <h2>Live Matches</h2>
+            <span class="heading-sub">1v1 · 2v2 · 4v4 · Free to play</span>
           </div>
           <div id="matches-grid" class="matches-grid"></div>
         </section>

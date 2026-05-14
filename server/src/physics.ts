@@ -1,11 +1,42 @@
 // PumpBall Server Physics — Based on Futsal x3 Liga de Primera (Chile) map
 // Coordinate system: center-origin (0,0 = center of field), like original Haxball
 
-// === MAP DIMENSIONS ===
-const MAP_W = 620;  // half-width (total 1240)
-const MAP_H = 300;  // half-height (total 600)
-const FIELD_W = 550; // inner field half-width
-const FIELD_H = 240; // inner field half-height
+// === FIELD CONFIG ===
+export type GameMode = '1v1' | '2v2' | '4v4';
+
+export interface FieldConfig {
+  mode: GameMode;
+  FIELD_W: number;
+  FIELD_H: number;
+  MAP_W: number;
+  MAP_H: number;
+  GOAL_Y: number;
+  GOAL_POST_X: number;
+  GOAL_NET_X: number;
+  GOAL_LINE_X: number;
+}
+
+const FIELD_CONFIGS: Record<GameMode, FieldConfig> = {
+  '4v4': {
+    mode: '4v4',
+    FIELD_W: 550, FIELD_H: 240, MAP_W: 620, MAP_H: 300,
+    GOAL_Y: 80, GOAL_POST_X: 550, GOAL_NET_X: 590, GOAL_LINE_X: 558.95,
+  },
+  '2v2': {
+    mode: '2v2',
+    FIELD_W: 440, FIELD_H: 192, MAP_W: 496, MAP_H: 240,
+    GOAL_Y: 64, GOAL_POST_X: 440, GOAL_NET_X: 472, GOAL_LINE_X: 447.16,
+  },
+  '1v1': {
+    mode: '1v1',
+    FIELD_W: 330, FIELD_H: 144, MAP_W: 372, MAP_H: 180,
+    GOAL_Y: 48, GOAL_POST_X: 330, GOAL_NET_X: 354, GOAL_LINE_X: 335.37,
+  },
+};
+
+export function getFieldConfig(mode: GameMode): FieldConfig {
+  return FIELD_CONFIGS[mode];
+}
 
 // === BALL (from disc0 in map) ===
 const BALL_RADIUS = 6.4;
@@ -23,14 +54,8 @@ const PLAYER_KICKING_ACCELERATION = 0.12;
 const PLAYER_KICKING_DAMPING = 0.92;
 const KICK_STRENGTH = 5.2;
 
-// === GOALS ===
-const GOAL_LINE_X = 558.95; // where goal is scored
-const GOAL_Y = 80;          // goal opening: -80 to +80
-const GOAL_POST_X = 550;
-const GOAL_POST_RADIUS = 5;
-const GOAL_NET_X = 590;     // back of the net
-
 // === WALLS ===
+const GOAL_POST_RADIUS = 5;
 const WALL_BCOEF = 1; // ball area walls
 const OUTER_BCOEF = 0.1; // outer walls
 
@@ -82,27 +107,29 @@ export type PhysicsSnapshot = {
   }>;
 };
 
-// Spawn positions from map (center-origin)
-const TEAM_POSITIONS = {
+// Base 4v4 spawn positions (center-origin)
+const BASE_POSITIONS = {
   red: [
-    { x: -250, y: -50 },
-    { x: -250, y: 0 },
-    { x: -250, y: 50 },
+    { x: -250, y: -75 },
+    { x: -250, y: -25 },
+    { x: -250, y: 25 },
+    { x: -250, y: 75 },
   ],
   blue: [
-    { x: 250, y: -50 },
-    { x: 250, y: 0 },
-    { x: 250, y: 50 },
+    { x: 250, y: -75 },
+    { x: 250, y: -25 },
+    { x: 250, y: 25 },
+    { x: 250, y: 75 },
   ],
 };
 
-// Static goal posts (immovable discs)
-const GOAL_POSTS: Disc[] = [
-  { x: -GOAL_POST_X, y: -GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
-  { x: -GOAL_POST_X, y: GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
-  { x: GOAL_POST_X, y: -GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
-  { x: GOAL_POST_X, y: GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
-];
+function getTeamPositions(mode: GameMode): { red: Array<{ x: number; y: number }>; blue: Array<{ x: number; y: number }> } {
+  const scale = mode === '1v1' ? 0.6 : mode === '2v2' ? 0.8 : 1;
+  const maxPerTeam = mode === '1v1' ? 1 : mode === '2v2' ? 2 : 4;
+  const red = BASE_POSITIONS.red.slice(0, maxPerTeam).map(p => ({ x: p.x * scale, y: p.y * scale }));
+  const blue = BASE_POSITIONS.blue.slice(0, maxPerTeam).map(p => ({ x: p.x * scale, y: p.y * scale }));
+  return { red, blue };
+}
 
 function normalise(v: [number, number]): [number, number] {
   const len = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
@@ -114,9 +141,14 @@ export class ServerPhysics {
   private ball: Disc;
   private players: Map<string, PlayerData> = new Map();
   private onGoal: (team: 'red' | 'blue') => void;
+  private config: FieldConfig;
+  private goalPosts: Disc[];
+  private teamPositions: { red: Array<{ x: number; y: number }>; blue: Array<{ x: number; y: number }> };
 
-  constructor(onGoal: (team: 'red' | 'blue') => void) {
+  constructor(config: FieldConfig, onGoal: (team: 'red' | 'blue') => void) {
+    this.config = config;
     this.onGoal = onGoal;
+    this.teamPositions = getTeamPositions(config.mode);
 
     this.ball = {
       x: 0, y: 0,
@@ -126,11 +158,19 @@ export class ServerPhysics {
       damping: BALL_DAMPING,
       bCoef: BALL_BCOEF,
     };
+
+    // Static goal posts (immovable discs)
+    this.goalPosts = [
+      { x: -config.GOAL_POST_X, y: -config.GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
+      { x: -config.GOAL_POST_X, y: config.GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
+      { x: config.GOAL_POST_X, y: -config.GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
+      { x: config.GOAL_POST_X, y: config.GOAL_Y, xspeed: 0, yspeed: 0, radius: GOAL_POST_RADIUS, invMass: 0, damping: 1, bCoef: 0.5 },
+    ];
   }
 
   addPlayer(id: string, team: 'red' | 'blue', index: number): void {
     if (this.players.has(id)) return;
-    const positions = TEAM_POSITIONS[team];
+    const positions = this.teamPositions[team];
     const pos = positions[index] ?? positions[0];
 
     this.players.set(id, {
@@ -187,7 +227,7 @@ export class ServerPhysics {
     }
 
     // 5. Goal post collisions (ball and players vs static posts)
-    for (const post of GOAL_POSTS) {
+    for (const post of this.goalPosts) {
       this.resolveDiscCollision(this.ball, post);
       for (const player of this.players.values()) {
         this.resolveDiscCollision(player.disc, post);
@@ -285,6 +325,7 @@ export class ServerPhysics {
   }
 
   private handleWalls(): void {
+    const { FIELD_W, FIELD_H, GOAL_Y, GOAL_NET_X, MAP_W, MAP_H } = this.config;
     const ball = this.ball;
     const inGoalY = ball.y > -GOAL_Y && ball.y < GOAL_Y;
 
@@ -345,6 +386,7 @@ export class ServerPhysics {
   }
 
   private checkGoals(): void {
+    const { GOAL_Y, GOAL_LINE_X } = this.config;
     const ball = this.ball;
     const inGoalY = ball.y > -GOAL_Y && ball.y < GOAL_Y;
     if (!inGoalY) return;
@@ -363,7 +405,7 @@ export class ServerPhysics {
     let redIdx = 0, blueIdx = 0;
     for (const player of this.players.values()) {
       const idx = player.team === 'red' ? redIdx++ : blueIdx++;
-      const positions = TEAM_POSITIONS[player.team];
+      const positions = this.teamPositions[player.team];
       const pos = positions[idx] ?? positions[0];
       player.disc.x = pos.x; player.disc.y = pos.y;
       player.disc.xspeed = 0; player.disc.yspeed = 0;

@@ -188,6 +188,18 @@ html, body {
   gap: 12px;
 }
 
+.mode-group-header {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--accent, #91F1B5);
+  text-transform: uppercase;
+  padding: 8px 0 2px;
+  border-bottom: 1px solid rgba(145, 241, 181, 0.15);
+  margin-bottom: 2px;
+}
+
 .match-card {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; padding: 16px; cursor: pointer;

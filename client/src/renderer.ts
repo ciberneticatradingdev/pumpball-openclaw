@@ -1,23 +1,13 @@
-import type { GameState, PlayerState } from './types';
+import type { GameState, PlayerState, FieldConfig, GameMode } from './types';
+import { getFieldConfig } from './types';
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-// Map dimensions (center-origin, matching server)
-const MAP_W = 620;
-const MAP_H = 300;
-const FIELD_W = 550;
-const FIELD_H = 240;
-const GOAL_Y = 80;
-const GOAL_POST_X = 550;
-const GOAL_NET_X = 590;
-const GOAL_POST_R = 5;
 const PLAYER_R = 15;
 const BALL_R = 6.4;
-
-const CANVAS_W = MAP_W * 2;
-const CANVAS_H = MAP_H * 2;
+const GOAL_POST_R = 5;
 
 const TEAM_RED = '#91F1B5';
 const TEAM_BLUE = '#FFFFFF';
@@ -31,12 +21,20 @@ const GOAL_NET_COLOR_RED = '#91F1B5';
 const GOAL_NET_COLOR_BLUE = '#FFFFFF';
 const POST_COLOR = '#91F1B5';
 
+// Current field config — defaults to 4v4
+let fc: FieldConfig = getFieldConfig('4v4');
+let CANVAS_W = fc.MAP_W * 2;
+let CANVAS_H = fc.MAP_H * 2;
 let fieldCache: HTMLCanvasElement | null = null;
 
-function cx(x: number): number { return x + MAP_W; }
-function cy(y: number): number { return y + MAP_H; }
+function cx(x: number): number { return x + fc.MAP_W; }
+function cy(y: number): number { return y + fc.MAP_H; }
 
 function buildFieldCache(): HTMLCanvasElement {
+  const { FIELD_W, FIELD_H, MAP_W, MAP_H, GOAL_Y, GOAL_POST_X, GOAL_NET_X } = fc;
+  CANVAS_W = MAP_W * 2;
+  CANVAS_H = MAP_H * 2;
+
   const c = document.createElement('canvas');
   c.width = CANVAS_W;
   c.height = CANVAS_H;
@@ -58,9 +56,10 @@ function buildFieldCache(): HTMLCanvasElement {
   ctx.fillStyle = grad;
   ctx.fillRect(cx(-FIELD_W), cy(-FIELD_H), FIELD_W * 2, FIELD_H * 2);
 
-  // Large "P" watermark in center
+  // Large "P" watermark in center (scale font with field)
   ctx.save();
-  ctx.font = 'bold 280px "Space Mono", monospace';
+  const watermarkSize = Math.round(280 * (FIELD_W / 550));
+  ctx.font = `bold ${watermarkSize}px "Space Mono", monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = 'rgba(145, 241, 181, 0.04)';
@@ -80,9 +79,10 @@ function buildFieldCache(): HTMLCanvasElement {
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Center circle
+  // Center circle (scale proportionally)
+  const centerCircleR = Math.round(100 * (FIELD_W / 550));
   ctx.beginPath();
-  ctx.arc(cx(0), cy(0), 100, 0, Math.PI * 2);
+  ctx.arc(cx(0), cy(0), centerCircleR, 0, Math.PI * 2);
   ctx.strokeStyle = `rgba(145, 241, 181, ${LINE_ALPHA})`;
   ctx.lineWidth = 1.5;
   ctx.stroke();
@@ -93,33 +93,36 @@ function buildFieldCache(): HTMLCanvasElement {
   ctx.fillStyle = `rgba(145, 241, 181, ${LINE_ALPHA + 0.2})`;
   ctx.fill();
 
-  // Penalty areas
+  // Penalty areas (scale proportionally)
+  const penaltyW = Math.round(160 * (FIELD_W / 550));
+  const penaltyH = Math.round(70 * (FIELD_H / 240));
+  const penaltyDotOffset = Math.round(175 * (FIELD_W / 550));
   ctx.strokeStyle = `rgba(145, 241, 181, ${LINE_ALPHA})`;
   ctx.lineWidth = 1.5;
 
   // Left penalty
   ctx.beginPath();
-  ctx.moveTo(cx(-FIELD_W), cy(-70));
-  ctx.lineTo(cx(-390), cy(-70));
-  ctx.lineTo(cx(-390), cy(70));
-  ctx.lineTo(cx(-FIELD_W), cy(70));
+  ctx.moveTo(cx(-FIELD_W), cy(-penaltyH));
+  ctx.lineTo(cx(-FIELD_W + penaltyW), cy(-penaltyH));
+  ctx.lineTo(cx(-FIELD_W + penaltyW), cy(penaltyH));
+  ctx.lineTo(cx(-FIELD_W), cy(penaltyH));
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(cx(-375), cy(0), 3, 0, Math.PI * 2);
+  ctx.arc(cx(-FIELD_W + penaltyDotOffset), cy(0), 3, 0, Math.PI * 2);
   ctx.fillStyle = `rgba(145, 241, 181, ${LINE_ALPHA + 0.1})`;
   ctx.fill();
 
   // Right penalty
   ctx.beginPath();
-  ctx.moveTo(cx(FIELD_W), cy(-70));
-  ctx.lineTo(cx(390), cy(-70));
-  ctx.lineTo(cx(390), cy(70));
-  ctx.lineTo(cx(FIELD_W), cy(70));
+  ctx.moveTo(cx(FIELD_W), cy(-penaltyH));
+  ctx.lineTo(cx(FIELD_W - penaltyW), cy(-penaltyH));
+  ctx.lineTo(cx(FIELD_W - penaltyW), cy(penaltyH));
+  ctx.lineTo(cx(FIELD_W), cy(penaltyH));
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(cx(375), cy(0), 3, 0, Math.PI * 2);
+  ctx.arc(cx(FIELD_W - penaltyDotOffset), cy(0), 3, 0, Math.PI * 2);
   ctx.fillStyle = `rgba(145, 241, 181, ${LINE_ALPHA + 0.1})`;
   ctx.fill();
 
@@ -227,10 +230,11 @@ function buildFieldCache(): HTMLCanvasElement {
   ctx.beginPath(); ctx.arc(cx(-FIELD_W), cy(FIELD_H), cornerR, -Math.PI / 2, 0); ctx.stroke();
   ctx.beginPath(); ctx.arc(cx(FIELD_W), cy(FIELD_H), cornerR, Math.PI, -Math.PI / 2); ctx.stroke();
 
-  // Sub marks
+  // Sub marks (scale proportionally)
   ctx.strokeStyle = `rgba(145, 241, 181, ${LINE_ALPHA * 0.7})`;
   ctx.lineWidth = 1;
-  for (const xPos of [-381, -240, -120, 120, 240, 381]) {
+  const subMarkPositions = [-381, -240, -120, 120, 240, 381].map(p => Math.round(p * (FIELD_W / 550)));
+  for (const xPos of subMarkPositions) {
     ctx.beginPath();
     ctx.moveTo(cx(xPos), cy(FIELD_H));
     ctx.lineTo(cx(xPos), cy(FIELD_H + 16));
@@ -247,6 +251,7 @@ export class Renderer {
   private scale: number = 1;
   private avatarCache: Map<string, HTMLImageElement> = new Map();
   private avatarLoading: Set<string> = new Set();
+  private currentMode: GameMode = '4v4';
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -256,6 +261,17 @@ export class Renderer {
   }
 
   setMyId(id: string) { this.myId = id; }
+
+  setFieldConfig(mode: GameMode) {
+    if (mode === this.currentMode && fieldCache) return;
+    this.currentMode = mode;
+    fc = getFieldConfig(mode);
+    CANVAS_W = fc.MAP_W * 2;
+    CANVAS_H = fc.MAP_H * 2;
+    // Invalidate and rebuild the field cache
+    fieldCache = buildFieldCache();
+    this.resize();
+  }
 
   setPlayerAvatar(id: string, dataUrl: string) {
     if (this.avatarLoading.has(id)) return;
