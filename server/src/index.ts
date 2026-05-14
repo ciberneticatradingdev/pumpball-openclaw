@@ -3,6 +3,30 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { Room } from './room';
+import { generateNonce, verifySignature, createToken, verifyToken } from './auth';
+import { getUserById, setUsername, setAvatar, getLeaderboard, addGameStats } from './database';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+
+// Avatar upload setup
+const AVATAR_DIR = path.join(__dirname, '..', 'data', 'avatars');
+fs.mkdirSync(AVATAR_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, AVATAR_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname) || '.png';
+      cb(null, Date.now() + '-' + Math.random().toString(36).slice(2) + ext);
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB max
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
@@ -209,6 +233,76 @@ app.get('/api/matches', (_req, res) => {
     };
   });
   res.json(matches);
+});
+
+// Serve avatar files
+app.use('/avatars', express.static(AVATAR_DIR));
+
+// === AUTH ROUTES ===
+app.post('/api/auth/nonce', (req, res) => {
+  const { wallet } = req.body;
+  if (!wallet || typeof wallet !== 'string') {
+    return res.status(400).json({ error: 'wallet required' });
+  }
+  const nonce = generateNonce(wallet);
+  res.json({ nonce });
+});
+
+app.post('/api/auth/verify', (req, res) => {
+  const { wallet, signature } = req.body;
+  if (!wallet || !signature) {
+    return res.status(400).json({ error: 'wallet and signature required' });
+  }
+  const user = verifySignature(wallet, signature);
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+  const token = createToken(user);
+  res.json({ token, user });
+});
+
+// === PROFILE ROUTES ===
+function authMiddleware(req: any, res: any, next: any) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  const payload = verifyToken(auth.slice(7));
+  if (!payload) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  req.userId = payload.userId;
+  req.wallet = payload.wallet;
+  next();
+}
+
+app.get('/api/profile', authMiddleware, (req: any, res) => {
+  const user = getUserById(req.userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({ user });
+});
+
+app.patch('/api/profile', authMiddleware, (req: any, res) => {
+  const { username } = req.body;
+  if (username && typeof username === 'string') {
+    setUsername(req.userId, username);
+  }
+  const user = getUserById(req.userId);
+  res.json({ user });
+});
+
+app.post('/api/profile/avatar', authMiddleware, upload.single('avatar'), (req: any, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const avatarUrl = '/avatars/' + req.file.filename;
+  setAvatar(req.userId, avatarUrl);
+  const user = getUserById(req.userId);
+  res.json({ user });
+});
+
+// === LEADERBOARD ===
+app.get('/api/leaderboard', (_req, res) => {
+  const players = getLeaderboard(20);
+  res.json({ players });
 });
 
 createPersistentRooms();

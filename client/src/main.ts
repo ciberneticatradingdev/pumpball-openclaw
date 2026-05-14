@@ -2,6 +2,7 @@ import './styles.css';
 import { io, Socket } from 'socket.io-client';
 import { Renderer } from './renderer';
 import type { GameState, RoomInfo, ChatMessage, Team, Keyboard } from './types';
+import { connectWallet, disconnectWallet, restoreSession, updateProfile, uploadAvatar, onAuthChange, getAuthState, getAvatarUrl, type UserProfile } from './wallet';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
@@ -115,6 +116,29 @@ function fetchMatches() {
     const el = document.getElementById('online-count');
     if (el) el.textContent = String(total);
   });
+}
+
+
+function renderSkeletonCards() {
+  const grid = document.getElementById('matches-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  for (let i = 0; i < 6; i++) {
+    const card = document.createElement('div');
+    card.className = 'skeleton-card';
+    card.innerHTML = `
+      <div class="skeleton-row">
+        <div class="skeleton-line short"></div>
+        <div class="skeleton-line" style="width:40px"></div>
+      </div>
+      <div class="skeleton-block"></div>
+      <div class="skeleton-row">
+        <div class="skeleton-line" style="width:50px"></div>
+        <div class="skeleton-line" style="width:50px"></div>
+      </div>
+    `;
+    grid.appendChild(card);
+  }
 }
 
 function renderMatchCards(matches: any[]) {
@@ -581,6 +605,43 @@ function buildUI() {
         </section>
 
         <div id="lobby-error" class="error-msg"></div>
+
+          <!-- Profile Section (hidden by default, shown via nav) -->
+          <div id="profile-section" class="profile-screen">
+            <div id="profile-connected" style="display:none">
+              <div class="profile-header">
+                <div class="profile-avatar-wrapper" id="avatar-wrapper">
+                  <div class="profile-avatar" id="profile-avatar">💊</div>
+                  <div class="profile-avatar-overlay">📷</div>
+                  <input type="file" id="avatar-input" accept="image/*" style="display:none" />
+                </div>
+                <div class="profile-info">
+                  <h2 id="profile-display-name">Player</h2>
+                  <div class="wallet-address" id="profile-wallet" title="Click to copy">---</div>
+                </div>
+              </div>
+              <div class="profile-stats">
+                <div class="stat-card"><div class="stat-value" id="stat-games">0</div><div class="stat-label">Games</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-wins">0</div><div class="stat-label">Wins</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-goals">0</div><div class="stat-label">Goals</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-level">1</div><div class="stat-label">Level</div></div>
+              </div>
+              <div class="profile-form">
+                <label>USERNAME</label>
+                <div style="display:flex;gap:8px">
+                  <input type="text" id="profile-username-input" placeholder="Your name..." maxlength="20" />
+                  <button id="save-username-btn" class="btn btn-primary btn-sm">Save</button>
+                </div>
+              </div>
+              <button id="disconnect-wallet-btn" class="btn btn-danger btn-sm" style="margin-top:12px;max-width:200px">Disconnect Wallet</button>
+            </div>
+            <div id="profile-not-connected" class="not-connected-msg">
+              <span class="big-icon">🔗</span>
+              Connect your wallet to create a profile, track stats, and customize your player.
+              <br/><br/>
+              <button id="profile-connect-btn" class="btn btn-primary">Connect Wallet</button>
+            </div>
+          </div>
       </main>
     </div>
 
@@ -780,18 +841,114 @@ function setupEventListeners() {
   $<HTMLButtonElement>('#join-room-btn').addEventListener('click', joinRoom);
   $<HTMLInputElement>('#join-code-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
 
-  // Wallet buttons (stubs)
-  $<HTMLButtonElement>('#connect-wallet-btn').addEventListener('click', () => toast('Wallet coming soon', 'info'));
-  const gwb = document.getElementById('game-wallet-btn');
-  if (gwb) gwb.addEventListener('click', () => toast('Wallet coming soon', 'info'));
+  // === Wallet Connect ===
+  async function handleWalletConnect() {
+    toast('Connecting wallet...', 'info');
+    const ok = await connectWallet();
+    if (ok) {
+      toast('Wallet connected!', 'success');
+      const auth = getAuthState();
+      if (auth.user) {
+        $<HTMLInputElement>('#player-name-input').value = auth.user.username;
+        myName = auth.user.username;
+      }
+    } else {
+      toast('Wallet connection failed or Phantom not installed', 'error');
+    }
+  }
 
-  // Sidebar nav (stubs except play)
+  $<HTMLButtonElement>('#connect-wallet-btn').addEventListener('click', handleWalletConnect);
+  const gwb = document.getElementById('game-wallet-btn');
+  if (gwb) gwb.addEventListener('click', handleWalletConnect);
+
+  const profileConnectBtn = document.getElementById('profile-connect-btn');
+  if (profileConnectBtn) profileConnectBtn.addEventListener('click', handleWalletConnect);
+
+  // Disconnect
+  const disconnectBtn = document.getElementById('disconnect-wallet-btn');
+  if (disconnectBtn) {
+    disconnectBtn.addEventListener('click', async () => {
+      await disconnectWallet();
+      toast('Wallet disconnected', 'info');
+    });
+  }
+
+  // Profile - save username
+  const saveUsernameBtn = document.getElementById('save-username-btn');
+  if (saveUsernameBtn) {
+    saveUsernameBtn.addEventListener('click', async () => {
+      const input = $<HTMLInputElement>('#profile-username-input');
+      const username = input.value.trim();
+      if (!username) return;
+      const user = await updateProfile({ username });
+      if (user) {
+        toast('Username updated!', 'success');
+        myName = user.username;
+        $<HTMLInputElement>('#player-name-input').value = user.username;
+      }
+    });
+  }
+
+  // Profile - avatar upload
+  const avatarWrapper = document.getElementById('avatar-wrapper');
+  const avatarInput = document.getElementById('avatar-input') as HTMLInputElement;
+  if (avatarWrapper && avatarInput) {
+    avatarWrapper.addEventListener('click', () => avatarInput.click());
+    avatarInput.addEventListener('change', async () => {
+      const file = avatarInput.files?.[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { toast('Max 2MB', 'error'); return; }
+      toast('Uploading avatar...', 'info');
+      const user = await uploadAvatar(file);
+      if (user) toast('Avatar updated!', 'success');
+      else toast('Upload failed', 'error');
+    });
+  }
+
+  // Profile - copy wallet
+  const profileWallet = document.getElementById('profile-wallet');
+  if (profileWallet) {
+    profileWallet.addEventListener('click', () => {
+      const auth = getAuthState();
+      if (auth.wallet) {
+        navigator.clipboard.writeText(auth.wallet).then(() => toast('Copied!', 'success'));
+      }
+    });
+  }
+
+  // Auth state listener - update UI
+  onAuthChange((auth) => {
+    updateWalletUI(auth.connected, auth.user);
+  });
+
+  // Sidebar nav
   document.querySelectorAll<HTMLButtonElement>('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
       btn.classList.add('active');
       const nav = btn.dataset.nav;
-      if (nav && nav !== 'play') toast(`${nav.charAt(0).toUpperCase() + nav.slice(1)} — coming soon`, 'info');
+
+      // Show/hide sections
+      const matchesSection = document.querySelector('.matches-section') as HTMLElement;
+      const customSection = document.querySelector('.custom-section') as HTMLElement;
+      const nameRow = document.querySelector('.lobby-name-row') as HTMLElement;
+      const profileSection = document.getElementById('profile-section') as HTMLElement;
+
+      if (nav === 'play') {
+        if (matchesSection) matchesSection.style.display = '';
+        if (customSection) customSection.style.display = '';
+        if (nameRow) nameRow.style.display = '';
+        if (profileSection) profileSection.classList.remove('active');
+      } else if (nav === 'profile') {
+        if (matchesSection) matchesSection.style.display = 'none';
+        if (customSection) customSection.style.display = 'none';
+        if (nameRow) nameRow.style.display = 'none';
+        if (profileSection) profileSection.classList.add('active');
+      } else if (nav === 'leaderboard') {
+        toast('Leaderboard — coming soon', 'info');
+      } else {
+        toast(((nav || '').charAt(0).toUpperCase() + (nav || '').slice(1)) + ' — coming soon', 'info');
+      }
     });
   });
 
@@ -893,13 +1050,102 @@ function startRenderLoop() {
 }
 
 // ===== INIT =====
+function updateWalletUI(connected: boolean, user: UserProfile | null) {
+  // Update all wallet buttons
+  const walletBtns = document.querySelectorAll('.wallet-btn');
+  walletBtns.forEach(btn => {
+    if (connected && user) {
+      btn.textContent = user.wallet_address.slice(0, 4) + '...' + user.wallet_address.slice(-4);
+      (btn as HTMLElement).style.fontSize = '10px';
+    } else {
+      btn.textContent = '🔗 Connect Wallet';
+      (btn as HTMLElement).style.fontSize = '';
+    }
+  });
+
+  // Update sidebar user info
+  const usernames = document.querySelectorAll('.user-name');
+  const handles = document.querySelectorAll('.user-handle');
+  const lvlBadges = document.querySelectorAll('.lvl-badge');
+  const avatarEls = document.querySelectorAll('.user-avatar');
+
+  if (connected && user) {
+    usernames.forEach(el => el.textContent = user.username);
+    handles.forEach(el => el.textContent = '@' + user.wallet_address.slice(0, 6));
+    lvlBadges.forEach(el => el.textContent = 'LVL ' + user.level);
+
+    if (user.avatar_url) {
+      const url = getAvatarUrl(user.avatar_url);
+      avatarEls.forEach(el => {
+        if (url) el.innerHTML = '<img src="' + url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" />';
+      });
+    }
+  } else {
+    usernames.forEach(el => el.textContent = 'Guest');
+    handles.forEach(el => el.textContent = '@anonymous');
+    lvlBadges.forEach(el => el.textContent = 'LVL 1');
+    avatarEls.forEach(el => el.textContent = '💊');
+  }
+
+  // Update profile page
+  const profileConnected = document.getElementById('profile-connected');
+  const profileNotConnected = document.getElementById('profile-not-connected');
+  if (profileConnected && profileNotConnected) {
+    if (connected && user) {
+      profileConnected.style.display = '';
+      profileNotConnected.style.display = 'none';
+
+      const pName = document.getElementById('profile-display-name');
+      if (pName) pName.textContent = user.username;
+
+      const pWallet = document.getElementById('profile-wallet');
+      if (pWallet) pWallet.textContent = user.wallet_address.slice(0, 8) + '...' + user.wallet_address.slice(-6);
+
+      const pAvatar = document.getElementById('profile-avatar');
+      if (pAvatar && user.avatar_url) {
+        const url = getAvatarUrl(user.avatar_url);
+        if (url) pAvatar.innerHTML = '<img src="' + url + '" />';
+      }
+
+      const sGames = document.getElementById('stat-games');
+      const sWins = document.getElementById('stat-wins');
+      const sGoals = document.getElementById('stat-goals');
+      const sLevel = document.getElementById('stat-level');
+      if (sGames) sGames.textContent = String(user.games_played);
+      if (sWins) sWins.textContent = String(user.games_won);
+      if (sGoals) sGoals.textContent = String(user.goals_scored);
+      if (sLevel) sLevel.textContent = String(user.level);
+
+      const usernameInput = document.getElementById('profile-username-input') as HTMLInputElement;
+      if (usernameInput) usernameInput.value = user.username;
+    } else {
+      profileConnected.style.display = 'none';
+      profileNotConnected.style.display = '';
+    }
+  }
+}
+
 function init() {
   buildUI();
   setupSocket();
   setupKeyboard();
   setupEventListeners();
   startRenderLoop();
+  renderSkeletonCards();
   startMatchesPolling();
+
+  // Restore wallet session if token exists
+  restoreSession().then(ok => {
+    if (ok) {
+      const auth = getAuthState();
+      updateWalletUI(auth.connected, auth.user);
+      if (auth.user) {
+        const nameInput = document.getElementById('player-name-input') as HTMLInputElement;
+        if (nameInput) nameInput.value = auth.user.username;
+        myName = auth.user.username;
+      }
+    }
+  });
 }
 
 init();
