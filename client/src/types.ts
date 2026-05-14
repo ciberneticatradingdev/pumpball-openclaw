@@ -32,7 +32,9 @@ export type GameState = {
   players: PlayerState[];
   score: { red: number; blue: number };
   status: 'waiting' | 'playing' | 'finished';
-  winner?: 'red' | 'blue';
+  winner?: 'red' | 'blue' | null;
+  timeLeft: number;
+  overtime: boolean;
 };
 
 export type RoomPlayer = {

@@ -11,17 +11,17 @@ const FIELD_H = 240; // inner field half-height
 const BALL_RADIUS = 6.4;
 const BALL_INV_MASS = 1.5;
 const BALL_BCOEF = 0.4;
-const BALL_DAMPING = 0.99;
+const BALL_DAMPING = 0.985;
 
 // === PLAYER (from playerPhysics in map) ===
 const PLAYER_RADIUS = 15;
 const PLAYER_INV_MASS = 0.5;
 const PLAYER_BCOEF = 0;
-const PLAYER_DAMPING = 0.96;
-const PLAYER_ACCELERATION = 0.11;
-const PLAYER_KICKING_ACCELERATION = 0.083;
-const PLAYER_KICKING_DAMPING = 0.96;
-const KICK_STRENGTH = 5;
+const PLAYER_DAMPING = 0.92;
+const PLAYER_ACCELERATION = 0.14;
+const PLAYER_KICKING_ACCELERATION = 0.1;
+const PLAYER_KICKING_DAMPING = 0.92;
+const KICK_STRENGTH = 4.5;
 
 // === GOALS ===
 const GOAL_LINE_X = 558.95; // where goal is scored

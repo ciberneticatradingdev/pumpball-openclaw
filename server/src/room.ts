@@ -39,7 +39,9 @@ type GameState = {
   }>;
   score: { red: number; blue: number };
   status: 'waiting' | 'playing' | 'finished';
-  winner?: 'red' | 'blue';
+  winner?: 'red' | 'blue' | null;
+  timeLeft: number;
+  overtime: boolean;
 };
 
 const PHYSICS_TICK = 1000 / 60;
@@ -47,6 +49,8 @@ const BROADCAST_TICK = 1000 / 20;
 const MAX_PLAYERS = 8;
 const MAX_TEAM_SIZE = 3;
 const SCORE_LIMIT = 5;
+const MATCH_DURATION = 300;
+const OVERTIME_DURATION = 60;
 
 export class Room {
   public code: string;
@@ -58,8 +62,11 @@ export class Room {
   private physics: ServerPhysics | null = null;
   private physicsInterval: ReturnType<typeof setInterval> | null = null;
   private broadcastInterval: ReturnType<typeof setInterval> | null = null;
+  private timerInterval: ReturnType<typeof setInterval> | null = null;
   private io: Server;
   private goalCooldown = false;
+  private timeLeft = MATCH_DURATION;
+  private overtime = false;
 
   constructor(
     code: string,
@@ -151,6 +158,8 @@ export class Room {
     this.status = 'playing';
     this.score = { red: 0, blue: 0 };
     this.goalCooldown = false;
+    this.timeLeft = MATCH_DURATION;
+    this.overtime = false;
 
     this.physics = new ServerPhysics((team) => this.handleGoal(team));
 
@@ -170,6 +179,10 @@ export class Room {
       this.broadcastGameState();
     }, BROADCAST_TICK);
 
+    this.timerInterval = setInterval(() => {
+      this.tickTimer();
+    }, 1000);
+
     this.io.to(this.roomKey).emit('gameStarted');
     this.broadcastRoomInfo();
     return true;
@@ -186,9 +199,52 @@ export class Room {
       clearInterval(this.broadcastInterval);
       this.broadcastInterval = null;
     }
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
 
     this.physics = null;
     this.broadcastRoomInfo();
+  }
+
+  private tickTimer(): void {
+    if (this.status !== 'playing') return;
+    if (this.goalCooldown) return;
+    if (this.timeLeft <= 0) return;
+
+    this.timeLeft--;
+
+    if (this.timeLeft <= 0) {
+      if (this.score.red === this.score.blue && !this.overtime) {
+        this.overtime = true;
+        this.timeLeft = OVERTIME_DURATION;
+        this.io.to(this.roomKey).emit('overtime');
+        return;
+      }
+      this.endByTimer();
+    }
+  }
+
+  private endByTimer(): void {
+    const winner: 'red' | 'blue' | null =
+      this.score.red > this.score.blue ? 'red'
+      : this.score.blue > this.score.red ? 'blue'
+      : null;
+
+    this.io.to(this.roomKey).emit('gameOver', {
+      winner,
+      score: { ...this.score },
+    });
+
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+
+    setTimeout(() => {
+      this.reset();
+    }, 4000);
   }
 
   // Reset the room for another match without tearing down the room itself.
@@ -202,10 +258,16 @@ export class Room {
       clearInterval(this.broadcastInterval);
       this.broadcastInterval = null;
     }
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
     this.physics = null;
     this.status = 'waiting';
     this.score = { red: 0, blue: 0 };
     this.goalCooldown = false;
+    this.timeLeft = MATCH_DURATION;
+    this.overtime = false;
     this.broadcastRoomInfo();
   }
 
@@ -258,6 +320,8 @@ export class Room {
       players: playersArray,
       score: { ...this.score },
       status: this.status,
+      timeLeft: this.timeLeft,
+      overtime: this.overtime,
     };
 
     this.io.to(this.roomKey).emit('gameState', state);

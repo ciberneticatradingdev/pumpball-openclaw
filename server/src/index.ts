@@ -149,6 +149,10 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('ping', (callback: () => void) => {
+    if (typeof callback === 'function') callback();
+  });
+
   socket.on('disconnect', () => {
     console.log(`[-] Player disconnected: ${socket.id}`);
     handleLeave(socket.id);
