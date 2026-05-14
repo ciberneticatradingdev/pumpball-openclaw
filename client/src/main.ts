@@ -20,6 +20,17 @@ let targetState: GameState | null = null;
 let lastStateTime: number = 0;
 const SERVER_TICK_MS = 50;
 
+// Persistent matches list
+type MatchInfo = {
+  code: string;
+  players: number;
+  redPlayers: number;
+  bluePlayers: number;
+  status: 'waiting' | 'playing' | 'finished';
+  score: { red: number; blue: number };
+};
+let matchesPollTimer: ReturnType<typeof setInterval> | null = null;
+
 // Keyboard state
 const keys: Keyboard = {
   rightClicked: false,
@@ -117,6 +128,122 @@ function addSystemMessage(container: HTMLElement, text: string) {
   container.scrollTop = container.scrollHeight;
 }
 
+// ===== MATCHES (landing page cards) =====
+async function fetchMatches(): Promise<MatchInfo[]> {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/matches`);
+    if (!res.ok) throw new Error('Bad response');
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+function renderMatchCards(matches: MatchInfo[]) {
+  const grid = document.querySelector<HTMLElement>('#matches-grid');
+  if (!grid) return;
+
+  // Always render 6 placeholders if API is empty
+  const list: MatchInfo[] = matches.length >= 6 ? matches.slice(0, 6) : (
+    Array.from({ length: 6 }, (_, i) => ({
+      code: `PUMP-${i + 1}`,
+      players: 0,
+      redPlayers: 0,
+      bluePlayers: 0,
+      status: 'waiting' as const,
+      score: { red: 0, blue: 0 },
+    }))
+  );
+
+  grid.innerHTML = '';
+  list.forEach((m, idx) => {
+    const card = document.createElement('div');
+    card.className = 'match-card';
+    card.dataset.code = m.code;
+
+    const isPlaying = m.status === 'playing';
+    const isFull = m.players >= 6;
+
+    const redOnDots = Array.from({ length: 3 }, (_, i) =>
+      `<span class="dot red ${i < m.redPlayers ? 'on' : ''}"></span>`
+    ).join('');
+    const blueOnDots = Array.from({ length: 3 }, (_, i) =>
+      `<span class="dot blue ${i < m.bluePlayers ? 'on' : ''}"></span>`
+    ).join('');
+
+    const scoreOrLabel = isPlaying
+      ? `<div class="match-score">
+           <span class="red-score">${m.score.red}</span>
+           <span class="sep">—</span>
+           <span class="blue-score">${m.score.blue}</span>
+         </div>`
+      : `<div class="match-score">
+           <span class="red-score">0</span>
+           <span class="sep">—</span>
+           <span class="blue-score">0</span>
+         </div>`;
+
+    const joinDisabled = isFull ? 'disabled' : '';
+    const joinLabel = isPlaying ? 'WATCH' : 'JOIN';
+
+    card.innerHTML = `
+      <div class="match-card-top">
+        <div class="match-title">Match #${idx + 1}</div>
+        <div class="match-status ${isPlaying ? 'playing' : 'waiting'}">${isPlaying ? '● LIVE' : 'OPEN'}</div>
+      </div>
+      ${scoreOrLabel}
+      <div class="match-teams">
+        <div class="team-dots">${redOnDots}</div>
+        <span style="color: var(--text-muted)">vs</span>
+        <div class="team-dots">${blueOnDots}</div>
+      </div>
+      <div class="match-meta">
+        <div class="match-players"><strong>${m.players}</strong>/6 players</div>
+        <button class="match-join" ${joinDisabled}>${joinLabel}</button>
+      </div>
+    `;
+
+    card.querySelector<HTMLButtonElement>('.match-join')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      joinPersistentMatch(m.code);
+    });
+
+    card.addEventListener('click', () => {
+      if (!isFull) joinPersistentMatch(m.code);
+    });
+
+    grid.appendChild(card);
+  });
+}
+
+async function refreshMatches() {
+  const matches = await fetchMatches();
+  renderMatchCards(matches);
+}
+
+function startMatchesPolling() {
+  if (matchesPollTimer) return;
+  refreshMatches();
+  matchesPollTimer = setInterval(refreshMatches, 5000);
+}
+
+function stopMatchesPolling() {
+  if (matchesPollTimer) {
+    clearInterval(matchesPollTimer);
+    matchesPollTimer = null;
+  }
+}
+
+function joinPersistentMatch(code: string) {
+  const name = $<HTMLInputElement>('#player-name-input').value.trim() || 'Player';
+  myName = name;
+  socket.emit('joinRoom', { roomCode: code, name }, (success: boolean, error?: string) => {
+    if (!success) {
+      toast(error ?? 'Could not join match', 'error');
+    }
+  });
+}
+
 // ===== ROOM SCREEN UI =====
 function renderRoomInfo(info: RoomInfo) {
   currentRoom = info;
@@ -139,7 +266,6 @@ function renderRoomInfo(info: RoomInfo) {
   const spectators = info.players.filter((p) => p.team === 'spectator');
 
   redSlots.innerHTML = '';
-  bluePlayers.forEach === undefined; // type check
   [0, 1, 2].forEach((i) => {
     const slot = document.createElement('div');
     const p = redPlayers[i];
@@ -238,7 +364,6 @@ function setupKeyboard() {
 
   document.addEventListener('keydown', (e) => {
     if (!isInGame) return;
-    // Don't capture keys when typing in chat
     const target = e.target as HTMLElement;
     if (target.tagName === 'INPUT') return;
 
@@ -263,7 +388,6 @@ function setupKeyboard() {
     keys[key] = false;
   });
 
-  // Start input loop when game starts
   document.addEventListener('gameStarted', () => startInput());
   document.addEventListener('gameStopped', () => {
     stopInput();
@@ -286,10 +410,12 @@ function setupSocket() {
     isInGame = false;
     document.dispatchEvent(new Event('gameStopped'));
     showScreen('lobby');
+    startMatchesPolling();
   });
 
   socket.on('roomJoined', (info: RoomInfo) => {
     currentRoom = info;
+    stopMatchesPolling();
     showScreen('room');
     renderRoomInfo(info);
 
@@ -303,7 +429,6 @@ function setupSocket() {
     if (!isInGame) {
       renderRoomInfo(info);
     } else {
-      // Update my team reference
       const me = info.players.find((p) => p.id === myId);
       if (me) myTeam = me.team;
     }
@@ -335,11 +460,9 @@ function setupSocket() {
     targetState = state;
     lastStateTime = performance.now();
 
-    // Update score (cheap text update)
     $<HTMLElement>('#score-red').textContent = String(state.score.red);
     $<HTMLElement>('#score-blue').textContent = String(state.score.blue);
 
-    // Update player list max 2x/sec (avoid DOM thrashing)
     const now = performance.now();
     if (now - lastPlayerListUpdate > 500) {
       renderGamePlayers(state);
@@ -351,7 +474,6 @@ function setupSocket() {
     playGoalSound();
     showGoalOverlay(data.team, data.score);
 
-    // Update score
     $<HTMLElement>('#score-red').textContent = String(data.score.red);
     $<HTMLElement>('#score-blue').textContent = String(data.score.blue);
 
@@ -373,7 +495,6 @@ function setupSocket() {
       hideGameOver();
       showScreen('room');
       if (currentRoom) {
-        // Reset room status for display
         currentRoom.status = 'waiting';
         renderRoomInfo(currentRoom);
       }
@@ -431,34 +552,82 @@ function hideGameOver() {
 function buildUI() {
   const app = document.getElementById('app')!;
   app.innerHTML = `
-    <!-- LOBBY SCREEN -->
+    <!-- LANDING / LOBBY SCREEN -->
     <div id="lobby-screen" class="screen active">
-      <div class="lobby-container">
-        <div class="logo">
-          <h1>PUMPBALL</h1>
-          <div class="tagline">Kick it. Bet it. Degen it.</div>
-        </div>
+      <div class="lobby-shell">
 
-        <div class="input-group">
-          <div class="section-label">Your name</div>
-          <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="20" />
-        </div>
-
-        <div>
-          <button id="create-room-btn" class="btn btn-primary">Create Room</button>
-        </div>
-
-        <div class="divider">or join</div>
-
-        <div class="input-group">
-          <div class="section-label">Room code</div>
-          <div class="join-row">
-            <input type="text" id="join-code-input" placeholder="PUMP42" maxlength="6" />
-            <button id="join-room-btn" class="btn btn-secondary">Join</button>
+        <!-- SIDEBAR -->
+        <aside class="lobby-sidebar">
+          <div class="sidebar-brand">
+            <span class="pill">💊</span>
+            <span class="brand-name">PUMPBALL</span>
           </div>
-        </div>
 
-        <div id="lobby-error" class="error-msg"></div>
+          <nav class="sidebar-nav">
+            <button class="nav-item active" data-nav="play">
+              <span class="nav-icon">▶</span> Play
+            </button>
+            <button class="nav-item" data-nav="profile">
+              <span class="nav-icon">◉</span> Profile
+            </button>
+            <button class="nav-item" data-nav="leaderboard">
+              <span class="nav-icon">★</span> Leaderboard
+            </button>
+            <button class="nav-item" data-nav="settings">
+              <span class="nav-icon">⚙</span> Settings
+            </button>
+            <button class="nav-item" data-nav="about">
+              <span class="nav-icon">?</span> About
+            </button>
+          </nav>
+
+          <div class="sidebar-foot">
+            <button id="connect-wallet-btn" class="connect-btn">Connect Wallet</button>
+            <div id="wallet-info" class="wallet-info" style="display:none"></div>
+            <div class="socials">
+              <a class="social-link" href="#" target="_blank" rel="noopener">X</a>
+              <a class="social-link" href="#" target="_blank" rel="noopener">DC</a>
+              <a class="social-link" href="#" target="_blank" rel="noopener">TG</a>
+            </div>
+          </div>
+        </aside>
+
+        <!-- MAIN -->
+        <main class="lobby-main">
+          <div class="lobby-header">
+            <h1>PUMP<span class="accent">BALL</span></h1>
+            <div class="tagline">Kick it. Bet it. Degen it.</div>
+          </div>
+
+          <div class="lobby-name-row">
+            <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="20" />
+          </div>
+
+          <section class="matches-section">
+            <div class="section-heading">
+              <h2>Live Matches · 3v3</h2>
+              <span class="heading-sub">Free to play · No bet</span>
+            </div>
+            <div id="matches-grid" class="matches-grid"></div>
+          </section>
+
+          <section class="custom-section">
+            <div class="custom-info">
+              <h3><span class="lock-icon">🔒</span> Custom Match</h3>
+              <p>Create a private lobby and play with friends. Wager mode launching soon — stake $PUMP, winner takes all.</p>
+            </div>
+            <div class="custom-actions">
+              <div class="join-by-code">
+                <input type="text" id="join-code-input" placeholder="CODE" maxlength="8" />
+                <button id="join-room-btn" class="btn btn-secondary btn-sm">Join</button>
+              </div>
+              <button id="create-room-btn" class="btn-outlined">Create Custom Match</button>
+              <span class="coming-soon-tag">Betting · Soon</span>
+            </div>
+          </section>
+
+          <div id="lobby-error" class="error-msg"></div>
+        </main>
       </div>
     </div>
 
@@ -480,11 +649,11 @@ function buildUI() {
               <div class="section-label">Teams</div>
               <div class="teams-grid">
                 <div class="team-column">
-                  <div class="team-title red">RED 🔴</div>
+                  <div class="team-title red">RED</div>
                   <div id="red-slots"></div>
                 </div>
                 <div class="team-column">
-                  <div class="team-title blue">BLUE 🔵</div>
+                  <div class="team-title blue">BLUE</div>
                   <div id="blue-slots"></div>
                 </div>
               </div>
@@ -593,7 +762,7 @@ function buildUI() {
 
 // ===== EVENT LISTENERS =====
 function setupEventListeners() {
-  // Lobby — Create room
+  // Lobby — Create custom room
   $<HTMLButtonElement>('#create-room-btn').addEventListener('click', () => {
     const name = $<HTMLInputElement>('#player-name-input').value.trim() || 'Player';
     myName = name;
@@ -601,6 +770,7 @@ function setupEventListeners() {
 
     socket.emit('createRoom', name, (roomCode: string) => {
       toast(`Room ${roomCode} created!`, 'success');
+      stopMatchesPolling();
       showScreen('room');
       currentRoom = {
         code: roomCode,
@@ -616,7 +786,7 @@ function setupEventListeners() {
     });
   });
 
-  // Lobby — Join room
+  // Lobby — Join by code
   $<HTMLButtonElement>('#join-room-btn').addEventListener('click', joinRoom);
   $<HTMLInputElement>('#join-code-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') joinRoom();
@@ -643,6 +813,23 @@ function setupEventListeners() {
     });
   }
 
+  // Connect Wallet (stub)
+  $<HTMLButtonElement>('#connect-wallet-btn').addEventListener('click', () => {
+    toast('Wallet integration coming soon', 'info');
+  });
+
+  // Sidebar nav (mostly stubs except Play)
+  document.querySelectorAll<HTMLButtonElement>('.nav-item').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+      btn.classList.add('active');
+      const nav = btn.dataset.nav;
+      if (nav && nav !== 'play') {
+        toast(`${nav.charAt(0).toUpperCase() + nav.slice(1)} — coming soon`, 'info');
+      }
+    });
+  });
+
   // Room — Leave
   $<HTMLButtonElement>('#leave-room-btn').addEventListener('click', () => {
     socket.emit('leaveRoom');
@@ -650,6 +837,7 @@ function setupEventListeners() {
     isInGame = false;
     document.dispatchEvent(new Event('gameStopped'));
     showScreen('lobby');
+    startMatchesPolling();
     toast('Left room', 'info');
   });
 
@@ -706,13 +894,6 @@ function setupEventListeners() {
     }
   });
 
-  // Enter key in name input → create room
-  $<HTMLInputElement>('#player-name-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      $<HTMLButtonElement>('#create-room-btn').click();
-    }
-  });
-
   // Resize canvas
   window.addEventListener('resize', () => {
     if (renderer && isInGame) {
@@ -740,12 +921,15 @@ function init() {
   const canvas = $<HTMLCanvasElement>('#game-canvas');
   renderer = new Renderer(canvas);
 
+  // Initial empty match cards (so layout shows before fetch)
+  renderMatchCards([]);
+
   setupKeyboard();
   setupSocket();
   setupEventListeners();
   startRenderLoop();
+  startMatchesPolling();
 
-  // Set socket ID when available
   setTimeout(() => {
     if (socket.id) {
       myId = socket.id;

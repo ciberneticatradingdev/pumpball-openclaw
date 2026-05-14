@@ -30,6 +30,18 @@ type Keyboard = {
   spaceClicked: boolean;
 };
 
+// Codes of the 6 always-on persistent matches shown on the landing page
+const PERSISTENT_CODES = ['PUMP-1', 'PUMP-2', 'PUMP-3', 'PUMP-4', 'PUMP-5', 'PUMP-6'];
+
+function createPersistentRooms() {
+  for (const code of PERSISTENT_CODES) {
+    if (rooms.has(code)) continue;
+    const room = new Room(code, '', '', io, { persistent: true });
+    rooms.set(code, room);
+  }
+  console.log(`[+] ${PERSISTENT_CODES.length} persistent rooms ready: ${PERSISTENT_CODES.join(', ')}`);
+}
+
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -38,7 +50,7 @@ function generateRoomCode(): string {
     for (let i = 0; i < 6; i++) {
       code += chars[Math.floor(Math.random() * chars.length)];
     }
-  } while (rooms.has(code));
+  } while (rooms.has(code) || PERSISTENT_CODES.includes(code));
   return code;
 }
 
@@ -149,7 +161,7 @@ io.on('connection', (socket) => {
     const room = rooms.get(code);
     if (room) {
       room.removePlayer(socketId);
-      if (room.isEmpty()) {
+      if (room.isEmpty() && !room.persistent) {
         rooms.delete(code);
         console.log(`[-] Room ${code} deleted (empty)`);
       }
@@ -163,6 +175,23 @@ io.on('connection', (socket) => {
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', rooms: rooms.size, players: playerRooms.size });
 });
+
+app.get('/api/matches', (_req, res) => {
+  const matches = PERSISTENT_CODES.map((code) => {
+    const room = rooms.get(code);
+    return room ? room.getSummary() : {
+      code,
+      players: 0,
+      redPlayers: 0,
+      bluePlayers: 0,
+      status: 'waiting' as const,
+      score: { red: 0, blue: 0 },
+    };
+  });
+  res.json(matches);
+});
+
+createPersistentRooms();
 
 httpServer.listen(PORT, () => {
   console.log(`\n⚡ PumpBall server running on http://localhost:${PORT}\n`);

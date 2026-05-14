@@ -20,15 +20,15 @@ const BALL_R = 6.4;
 const CANVAS_W = MAP_W * 2;  // 1240
 const CANVAS_H = MAP_H * 2;  // 600
 
-const TEAM_RED = '#ff3860';
-const TEAM_BLUE = '#00d1ff';
-const BALL_COLOR = '#ffbf00'; // from map disc0 color
-const FIELD_BG = '#5C5C66';   // from map bg color
-const OUTER_BG = '#0e0e16';
-const LINE_COLOR = '#B4BDCC';
-const GOAL_LINE_COLOR = '#d30000';
-const GOAL_NET_COLOR = '#16163a';
-const POST_COLOR = '#d30000';
+const TEAM_RED = '#FF4D6A';
+const TEAM_BLUE = '#4DA6FF';
+const BALL_COLOR = '#91F1B5';
+const FIELD_BG = '#1A2332';
+const OUTER_BG = '#141519';
+const LINE_COLOR = '#91F1B540';
+const GOAL_LINE_COLOR = '#FF4D6A';
+const GOAL_NET_COLOR = '#1A2332';
+const POST_COLOR = '#91F1B5';
 
 // Pre-rendered field cache
 let fieldCache: HTMLCanvasElement | null = null;
@@ -67,7 +67,7 @@ function buildFieldCache(): HTMLCanvasElement {
   // Center circle (kickoff radius ~100)
   ctx.beginPath();
   ctx.arc(cx(0), cy(0), 100, 0, Math.PI * 2);
-  ctx.strokeStyle = '#A8B0BC';
+  ctx.strokeStyle = LINE_COLOR;
   ctx.lineWidth = 1;
   ctx.stroke();
 

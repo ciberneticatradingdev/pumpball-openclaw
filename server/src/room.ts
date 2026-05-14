@@ -51,6 +51,7 @@ const SCORE_LIMIT = 5;
 export class Room {
   public code: string;
   public hostId: string;
+  public persistent: boolean;
   private status: 'waiting' | 'playing' | 'finished' = 'waiting';
   private players: Map<string, RoomPlayerData> = new Map();
   private score = { red: 0, blue: 0 };
@@ -60,11 +61,20 @@ export class Room {
   private io: Server;
   private goalCooldown = false;
 
-  constructor(code: string, hostId: string, hostName: string, io: Server) {
+  constructor(
+    code: string,
+    hostId: string,
+    hostName: string,
+    io: Server,
+    options: { persistent?: boolean } = {},
+  ) {
     this.code = code;
     this.hostId = hostId;
     this.io = io;
-    this.players.set(hostId, { id: hostId, name: hostName, team: 'spectator' });
+    this.persistent = !!options.persistent;
+    if (hostId) {
+      this.players.set(hostId, { id: hostId, name: hostName, team: 'spectator' });
+    }
   }
 
   get roomKey() {
@@ -75,6 +85,10 @@ export class Room {
     if (this.players.size >= MAX_PLAYERS) return false;
     if (this.status !== 'waiting') return false;
     this.players.set(id, { id, name, team: 'spectator' });
+    // Auto-assign host if persistent room is unhosted
+    if (!this.hostId || !this.players.has(this.hostId)) {
+      this.hostId = id;
+    }
     this.broadcastRoomInfo();
     return true;
   }
@@ -86,6 +100,12 @@ export class Room {
       const next = this.players.keys().next().value as string | undefined;
       if (next) {
         this.hostId = next;
+      } else if (this.persistent) {
+        // Persistent: keep room alive, reset for next joiners
+        this.hostId = '';
+        if (this.status === 'playing') this.reset();
+        else this.broadcastRoomInfo();
+        return;
       } else {
         this.stopGame();
         return;
@@ -171,6 +191,24 @@ export class Room {
     this.broadcastRoomInfo();
   }
 
+  // Reset the room for another match without tearing down the room itself.
+  // Players keep their team assignments; score/physics/status reset to waiting.
+  reset(): void {
+    if (this.physicsInterval) {
+      clearInterval(this.physicsInterval);
+      this.physicsInterval = null;
+    }
+    if (this.broadcastInterval) {
+      clearInterval(this.broadcastInterval);
+      this.broadcastInterval = null;
+    }
+    this.physics = null;
+    this.status = 'waiting';
+    this.score = { red: 0, blue: 0 };
+    this.goalCooldown = false;
+    this.broadcastRoomInfo();
+  }
+
   private handleGoal(team: 'red' | 'blue'): void {
     if (this.goalCooldown) return;
     this.goalCooldown = true;
@@ -188,7 +226,7 @@ export class Room {
         score: { ...this.score },
       });
       setTimeout(() => {
-        this.stopGame();
+        this.reset();
       }, 4000);
       return;
     }
@@ -235,6 +273,19 @@ export class Room {
       code: this.code,
       players: Array.from(this.players.values()),
       hostId: this.hostId,
+      status: this.status,
+      score: { ...this.score },
+    };
+  }
+
+  // Public summary for landing page match list
+  getSummary() {
+    const ps = Array.from(this.players.values());
+    return {
+      code: this.code,
+      players: ps.length,
+      redPlayers: ps.filter((p) => p.team === 'red').length,
+      bluePlayers: ps.filter((p) => p.team === 'blue').length,
       status: this.status,
       score: { ...this.score },
     };
