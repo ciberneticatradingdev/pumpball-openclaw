@@ -3,3 +3,6 @@ dist/
 .env
 ref-*/
 build.sh
+
+# Runtime data
+server/data/
