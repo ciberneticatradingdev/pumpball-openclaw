@@ -542,9 +542,7 @@ function sidebarHTML(context: 'lobby' | 'game') {
   return `
     <div class="${cls}">
       <div class="sidebar-logo">
-        <img src="/logo.png" alt="PumpBall" class="sidebar-logo-img" />
-        <h1>PUMPBALL</h1>
-        <div class="tagline">Kick it. Bet it. Degen it.</div>
+        <img src="/logo-full.png" alt="PumpBall" class="sidebar-logo-img" />
       </div>
       <div class="sidebar-nav">
         <button class="nav-item active" data-nav="play"><span class="nav-icon">▶</span> Play</button>
