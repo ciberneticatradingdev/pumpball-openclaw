@@ -20,6 +20,7 @@ const PLAYER_BCOEF = 0;
 const PLAYER_DAMPING = 0.96;
 const PLAYER_ACCELERATION = 0.11;
 const PLAYER_KICKING_ACCELERATION = 0.083;
+const PLAYER_KICKING_DAMPING = 0.96;
 const KICK_STRENGTH = 5;
 
 // === GOALS ===
@@ -67,6 +68,7 @@ type PlayerData = {
   id: string;
   team: 'red' | 'blue';
   keyboard: Keyboard;
+  kickFired: boolean; // true after kick impulse applied, resets on key release
 };
 
 export type PhysicsSnapshot = {
@@ -142,6 +144,7 @@ export class ServerPhysics {
       },
       id, team,
       keyboard: { ...initialKeyboard },
+      kickFired: false,
     });
   }
 
@@ -166,10 +169,13 @@ export class ServerPhysics {
       this.moveDisc(player.disc);
     }
 
-    // 3. Damping
+    // 3. Damping (use kickingDamping when kicking)
     this.applyDamping(this.ball);
     for (const player of this.players.values()) {
-      this.applyDamping(player.disc);
+      const d = player.disc;
+      const damping = player.keyboard.spaceClicked ? PLAYER_KICKING_DAMPING : PLAYER_DAMPING;
+      d.xspeed *= damping;
+      d.yspeed *= damping;
     }
 
     // 4. Disc-disc collisions (players + ball)
@@ -199,6 +205,11 @@ export class ServerPhysics {
     const { keyboard, disc } = player;
     const isKicking = keyboard.spaceClicked;
 
+    // Reset kick state when key released
+    if (!isKicking) {
+      player.kickFired = false;
+    }
+
     let dx = 0, dy = 0;
     if (keyboard.leftClicked) dx--;
     if (keyboard.rightClicked) dx++;
@@ -211,8 +222,8 @@ export class ServerPhysics {
     disc.xspeed += dir[0] * accel;
     disc.yspeed += dir[1] * accel;
 
-    // Kick ball
-    if (isKicking) {
+    // Kick: ONE-SHOT impulse (only on first press, not continuous)
+    if (isKicking && !player.kickFired) {
       const distX = this.ball.x - disc.x;
       const distY = this.ball.y - disc.y;
       const dist = Math.sqrt(distX * distX + distY * distY);
@@ -222,6 +233,7 @@ export class ServerPhysics {
         const n = [distX / dist, distY / dist];
         this.ball.xspeed += n[0] * KICK_STRENGTH;
         this.ball.yspeed += n[1] * KICK_STRENGTH;
+        player.kickFired = true;
       }
     }
   }
@@ -356,6 +368,7 @@ export class ServerPhysics {
       player.disc.x = pos.x; player.disc.y = pos.y;
       player.disc.xspeed = 0; player.disc.yspeed = 0;
       player.keyboard = { ...initialKeyboard };
+      player.kickFired = false;
     }
   }
 
