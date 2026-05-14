@@ -2,7 +2,7 @@ import './styles.css';
 import { io, Socket } from 'socket.io-client';
 import { Renderer } from './renderer';
 import type { GameState, RoomInfo, ChatMessage, Team, Keyboard } from './types';
-import { connectWithWallet, connectLegacy, disconnectWallet, restoreSession, updateProfile, uploadAvatar, onAuthChange, getAuthState, getAvatarUrl, getDetectedWallets, type UserProfile } from './wallet';
+import { connectWithWallet, connectLegacy, disconnectWallet, restoreSession, updateProfile, uploadAvatar, onAuthChange, getAuthState, getDetectedWallets, type UserProfile } from './wallet';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
@@ -1185,8 +1185,8 @@ function updateWalletUI(connected: boolean, user: UserProfile | null) {
     handles.forEach(el => el.textContent = '@' + user.wallet_address.slice(0, 6));
     lvlBadges.forEach(el => el.textContent = 'LVL ' + user.level);
 
-    if (user.avatar_url) {
-      const url = getAvatarUrl(user.avatar_url);
+    if (user.avatar_data) {
+      const url = user.avatar_data;
       avatarEls.forEach(el => {
         if (url) el.innerHTML = '<img src="' + url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" />';
       });
@@ -1213,8 +1213,8 @@ function updateWalletUI(connected: boolean, user: UserProfile | null) {
       if (pWallet) pWallet.textContent = user.wallet_address.slice(0, 8) + '...' + user.wallet_address.slice(-6);
 
       const pAvatar = document.getElementById('profile-avatar');
-      if (pAvatar && user.avatar_url) {
-        const url = getAvatarUrl(user.avatar_url);
+      if (pAvatar && user.avatar_data) {
+        const url = user.avatar_data;
         if (url) pAvatar.innerHTML = '<img src="' + url + '" />';
       }
 

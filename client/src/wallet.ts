@@ -9,7 +9,7 @@ export type UserProfile = {
   id: string;
   wallet_address: string;
   username: string;
-  avatar_url: string | null;
+  avatar_data: string | null;
   xp: number;
   level: number;
   games_played: number;
@@ -133,7 +133,7 @@ export async function connectWithWallet(wallet: Wallet): Promise<boolean> {
       id: '',
       wallet_address: walletAddress,
       username: 'Player_' + walletAddress.slice(0, 4),
-      avatar_url: null,
+      avatar_data: null,
       xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
     };
     notify();
@@ -204,7 +204,7 @@ export async function connectLegacy(providerName: string): Promise<boolean> {
       id: '',
       wallet_address: walletAddress,
       username: 'Player_' + walletAddress.slice(0, 4),
-      avatar_url: null,
+      avatar_data: null,
       xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
     };
     notify();
@@ -263,12 +263,21 @@ export async function updateProfile(data: { username?: string }): Promise<UserPr
 export async function uploadAvatar(file: File): Promise<UserProfile | null> {
   if (!state.token) return null;
   try {
-    const form = new FormData();
-    form.append('avatar', file);
+    // Convert file to base64 data URL
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
     const resp = await fetch(`${SERVER_URL}/api/profile/avatar`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${state.token}` },
-      body: form,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.token}`,
+      },
+      body: JSON.stringify({ avatar: dataUrl }),
     });
     if (!resp.ok) return null;
     const { user } = await resp.json();

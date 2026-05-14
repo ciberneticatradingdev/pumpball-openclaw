@@ -1,43 +1,24 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
+import { Pool } from 'pg';
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'pumpball.db');
+const DATABASE_URL = process.env.DATABASE_URL || '';
 
-// Ensure data directory exists
-import fs from 'fs';
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+if (!DATABASE_URL) {
+  console.warn('⚠️  DATABASE_URL not set — database features disabled');
+}
 
-const db = new Database(DB_PATH);
-
-// Enable WAL mode for better concurrent performance
-db.pragma('journal_mode = WAL');
-
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    wallet_address TEXT UNIQUE NOT NULL,
-    username TEXT NOT NULL DEFAULT 'Player',
-    avatar_url TEXT DEFAULT NULL,
-    xp INTEGER NOT NULL DEFAULT 0,
-    level INTEGER NOT NULL DEFAULT 1,
-    games_played INTEGER NOT NULL DEFAULT 0,
-    games_won INTEGER NOT NULL DEFAULT 0,
-    goals_scored INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
-  CREATE INDEX IF NOT EXISTS idx_users_xp ON users(xp DESC);
-`);
+const pool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      ssl: { rejectUnauthorized: false }, // Railway requires SSL
+      max: 10,
+    })
+  : null;
 
 export type User = {
   id: string;
   wallet_address: string;
   username: string;
-  avatar_url: string | null;
+  avatar_data: string | null; // base64 encoded avatar
   xp: number;
   level: number;
   games_played: number;
@@ -47,67 +28,106 @@ export type User = {
   updated_at: string;
 };
 
-// Prepared statements
-const findByWallet = db.prepare('SELECT * FROM users WHERE wallet_address = ?');
-const findById = db.prepare('SELECT * FROM users WHERE id = ?');
-const insertUser = db.prepare(`
-  INSERT INTO users (id, wallet_address, username)
-  VALUES (?, ?, ?)
-`);
-const updateUsername = db.prepare(`
-  UPDATE users SET username = ?, updated_at = datetime('now') WHERE id = ?
-`);
-const updateAvatar = db.prepare(`
-  UPDATE users SET avatar_url = ?, updated_at = datetime('now') WHERE id = ?
-`);
-const updateStats = db.prepare(`
-  UPDATE users SET
-    games_played = games_played + ?,
-    games_won = games_won + ?,
-    goals_scored = goals_scored + ?,
-    xp = xp + ?,
-    level = MAX(1, (xp + ?) / 100 + 1),
-    updated_at = datetime('now')
-  WHERE id = ?
-`);
-const topPlayers = db.prepare(`
-  SELECT id, wallet_address, username, avatar_url, xp, level, games_played, games_won, goals_scored
-  FROM users ORDER BY xp DESC LIMIT ?
-`);
+// Initialize tables
+export async function initDB(): Promise<void> {
+  if (!pool) return;
 
-export function getOrCreateUser(walletAddress: string): User {
-  let user = findByWallet.get(walletAddress) as User | undefined;
-  if (user) return user;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      wallet_address TEXT UNIQUE NOT NULL,
+      username TEXT NOT NULL DEFAULT 'Player',
+      avatar_data TEXT DEFAULT NULL,
+      xp INTEGER NOT NULL DEFAULT 0,
+      level INTEGER NOT NULL DEFAULT 1,
+      games_played INTEGER NOT NULL DEFAULT 0,
+      games_won INTEGER NOT NULL DEFAULT 0,
+      goals_scored INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-  const id = uuidv4();
+    CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
+    CREATE INDEX IF NOT EXISTS idx_users_xp ON users(xp DESC);
+  `);
+
+  console.log('✅ Database tables ready');
+}
+
+export async function getOrCreateUser(walletAddress: string): Promise<User | null> {
+  if (!pool) return null;
+
+  // Try to find existing
+  const existing = await pool.query(
+    'SELECT * FROM users WHERE wallet_address = $1',
+    [walletAddress],
+  );
+
+  if (existing.rows.length > 0) return existing.rows[0];
+
+  // Create new
   const shortName = 'Player_' + walletAddress.slice(0, 4);
-  insertUser.run(id, walletAddress, shortName);
-  return findByWallet.get(walletAddress) as User;
+  const result = await pool.query(
+    'INSERT INTO users (wallet_address, username) VALUES ($1, $2) RETURNING *',
+    [walletAddress, shortName],
+  );
+
+  return result.rows[0] || null;
 }
 
-export function getUserById(id: string): User | undefined {
-  return findById.get(id) as User | undefined;
+export async function getUserById(id: string): Promise<User | null> {
+  if (!pool) return null;
+  const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+  return result.rows[0] || null;
 }
 
-export function getUserByWallet(wallet: string): User | undefined {
-  return findByWallet.get(wallet) as User | undefined;
+export async function getUserByWallet(wallet: string): Promise<User | null> {
+  if (!pool) return null;
+  const result = await pool.query('SELECT * FROM users WHERE wallet_address = $1', [wallet]);
+  return result.rows[0] || null;
 }
 
-export function setUsername(userId: string, username: string): void {
-  updateUsername.run(username.trim().slice(0, 20), userId);
+export async function setUsername(userId: string, username: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    'UPDATE users SET username = $1, updated_at = NOW() WHERE id = $2',
+    [username.trim().slice(0, 20), userId],
+  );
 }
 
-export function setAvatar(userId: string, avatarUrl: string): void {
-  updateAvatar.run(avatarUrl, userId);
+export async function setAvatar(userId: string, avatarData: string): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    'UPDATE users SET avatar_data = $1, updated_at = NOW() WHERE id = $2',
+    [avatarData, userId],
+  );
 }
 
-export function addGameStats(userId: string, won: boolean, goals: number): void {
+export async function addGameStats(userId: string, won: boolean, goals: number): Promise<void> {
+  if (!pool) return;
   const xpGain = won ? 25 : 10 + goals * 5;
-  updateStats.run(1, won ? 1 : 0, goals, xpGain, xpGain, userId);
+  await pool.query(
+    `UPDATE users SET
+      games_played = games_played + 1,
+      games_won = games_won + $1,
+      goals_scored = goals_scored + $2,
+      xp = xp + $3,
+      level = GREATEST(1, (xp + $3) / 100 + 1),
+      updated_at = NOW()
+    WHERE id = $4`,
+    [won ? 1 : 0, goals, xpGain, userId],
+  );
 }
 
-export function getLeaderboard(limit = 20): Partial<User>[] {
-  return topPlayers.all(limit) as Partial<User>[];
+export async function getLeaderboard(limit = 20): Promise<Partial<User>[]> {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT id, wallet_address, username, avatar_data, xp, level,
+            games_played, games_won, goals_scored
+     FROM users ORDER BY xp DESC LIMIT $1`,
+    [limit],
+  );
+  return result.rows;
 }
 
-export default db;
+export default pool;

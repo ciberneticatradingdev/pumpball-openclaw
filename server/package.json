@@ -8,24 +8,19 @@
     "postinstall": "npx tsc"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.98.4",
-    "better-sqlite3": "^12.10.0",
+    "@types/pg": "^8.20.0",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.3",
-    "multer": "^2.1.1",
+    "pg": "^8.20.0",
     "socket.io": "^4.7.2",
-    "tweetnacl": "^1.0.3",
-    "uuid": "^14.0.0"
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/multer": "^2.1.0",
     "@types/node": "^20.11.0",
-    "@types/uuid": "^10.0.0",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"
   }

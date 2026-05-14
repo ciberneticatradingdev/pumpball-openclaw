@@ -4,29 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { Room } from './room';
 import { generateNonce, verifySignature, createToken, verifyToken } from './auth';
-import { getUserById, setUsername, setAvatar, getLeaderboard, addGameStats } from './database';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-
-// Avatar upload setup
-const AVATAR_DIR = path.join(__dirname, '..', 'data', 'avatars');
-fs.mkdirSync(AVATAR_DIR, { recursive: true });
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, AVATAR_DIR),
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.png';
-      cb(null, Date.now() + '-' + Math.random().toString(36).slice(2) + ext);
-    },
-  }),
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB max
-  fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    cb(null, allowed.includes(file.mimetype));
-  },
-});
+import { getUserById, setUsername, setAvatar, getLeaderboard, initDB } from './database';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
@@ -235,9 +213,6 @@ app.get('/api/matches', (_req, res) => {
   res.json(matches);
 });
 
-// Serve avatar files
-app.use('/avatars', express.static(AVATAR_DIR));
-
 // === AUTH ROUTES ===
 app.post('/api/auth/nonce', (req, res) => {
   const { wallet } = req.body;
@@ -248,17 +223,21 @@ app.post('/api/auth/nonce', (req, res) => {
   res.json({ nonce });
 });
 
-app.post('/api/auth/verify', (req, res) => {
+app.post('/api/auth/verify', async (req, res) => {
   const { wallet, signature } = req.body;
   if (!wallet || !signature) {
     return res.status(400).json({ error: 'wallet and signature required' });
   }
-  const user = verifySignature(wallet, signature);
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid signature' });
+  try {
+    const user = await verifySignature(wallet, signature);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+    const token = createToken(user);
+    res.json({ token, user });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error' });
   }
-  const token = createToken(user);
-  res.json({ token, user });
 });
 
 // === PROFILE ROUTES ===
@@ -276,34 +255,51 @@ function authMiddleware(req: any, res: any, next: any) {
   next();
 }
 
-app.get('/api/profile', authMiddleware, (req: any, res) => {
-  const user = getUserById(req.userId);
+app.get('/api/profile', authMiddleware, async (req: any, res) => {
+  const user = await getUserById(req.userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json({ user });
 });
 
-app.patch('/api/profile', authMiddleware, (req: any, res) => {
+app.patch('/api/profile', authMiddleware, async (req: any, res) => {
   const { username } = req.body;
   if (username && typeof username === 'string') {
-    setUsername(req.userId, username);
+    await setUsername(req.userId, username);
   }
-  const user = getUserById(req.userId);
+  const user = await getUserById(req.userId);
   res.json({ user });
 });
 
-app.post('/api/profile/avatar', authMiddleware, upload.single('avatar'), (req: any, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const avatarUrl = '/avatars/' + req.file.filename;
-  setAvatar(req.userId, avatarUrl);
-  const user = getUserById(req.userId);
-  res.json({ user });
+app.post('/api/profile/avatar', authMiddleware, async (req: any, res) => {
+  // Accept base64 JSON body
+  try {
+    let avatarData: string;
+    if (req.is('application/json')) {
+      const body = req.body;
+      if (!body.avatar) return res.status(400).json({ error: 'No avatar data' });
+      avatarData = body.avatar; // expect base64 data URL
+    } else {
+      return res.status(400).json({ error: 'Send JSON with { avatar: "data:image/..." }' });
+    }
+    if (avatarData.length > 3 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Avatar too large (max 2MB)' });
+    }
+    await setAvatar(req.userId, avatarData);
+    const user = await getUserById(req.userId);
+    res.json({ user });
+  } catch {
+    res.status(500).json({ error: 'Upload failed' });
+  }
 });
 
 // === LEADERBOARD ===
-app.get('/api/leaderboard', (_req, res) => {
-  const players = getLeaderboard(20);
+app.get('/api/leaderboard', async (_req, res) => {
+  const players = await getLeaderboard(20);
   res.json({ players });
 });
+
+// Initialize database then start
+initDB().then(() => console.log('DB initialized')).catch(e => console.warn('DB init failed:', e));
 
 createPersistentRooms();
 
