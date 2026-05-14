@@ -166,12 +166,12 @@ function renderMatchCards(matches: any[]) {
       ` : ''}
       <div class="match-card-teams">
         <div class="match-team">
-          <span class="team-label red">RED</span>
+          <span class="team-label red">MINT</span>
           <span class="team-count">${m.redPlayers}</span>
         </div>
         <span class="match-vs">VS</span>
         <div class="match-team">
-          <span class="team-label blue">BLUE</span>
+          <span class="team-label blue">WHITE</span>
           <span class="team-count">${m.bluePlayers}</span>
         </div>
       </div>
@@ -189,7 +189,8 @@ function renderMatchCards(matches: any[]) {
         return;
       }
       myName = name;
-      socket.emit('joinRoom', { roomCode: m.code, name }, (success: boolean, error?: string) => {
+      const auth = getAuthState();
+      socket.emit('joinRoom', { roomCode: m.code, name, avatarData: auth.user?.avatar_data || undefined }, (success: boolean, error?: string) => {
         if (!success) toast(error || 'Could not join', 'error');
       });
     });
@@ -381,6 +382,19 @@ function setupSocket() {
     addSystemMessage(roomChat, `Joined room ${info.code}`);
   });
 
+  // Avatar events — receive once per player, cache in renderer
+  socket.on('playerAvatars', (avatars: Array<{ id: string; avatarData: string }>) => {
+    if (!renderer) return;
+    for (const a of avatars) {
+      renderer.setPlayerAvatar(a.id, a.avatarData);
+    }
+  });
+
+  socket.on('playerAvatar', (data: { id: string; avatarData: string }) => {
+    if (!renderer) return;
+    renderer.setPlayerAvatar(data.id, data.avatarData);
+  });
+
   socket.on('roomUpdated', (info: RoomInfo) => {
     currentRoom = info;
     if (!isInGame) {
@@ -455,7 +469,7 @@ function setupSocket() {
     if (sb) sb.textContent = String(data.score.blue);
 
     const gameChat = $<HTMLElement>('#game-chat-messages');
-    const teamName = data.team === 'red' ? '🔴 RED' : '🔵 BLUE';
+    const teamName = data.team === 'red' ? '🟢 MINT' : '⚪ WHITE';
     addSystemMessage(gameChat, `GOAL! ${teamName} scores! ${data.score.red} - ${data.score.blue}`);
   });
 
@@ -476,7 +490,7 @@ function setupSocket() {
     }
 
     const gameChat = $<HTMLElement>('#game-chat-messages');
-    const teamName = data.winner ? (data.winner === 'red' ? 'RED' : 'BLUE') : 'DRAW';
+    const teamName = data.winner ? (data.winner === 'red' ? 'MINT' : 'WHITE') : 'DRAW';
     addSystemMessage(gameChat, `GAME OVER! ${teamName}${data.winner ? ' WINS!' : '!'} Final: ${data.score.red} - ${data.score.blue}`);
 
     setTimeout(() => {
@@ -515,7 +529,7 @@ function showGameOver(winner: Team, score: { red: number; blue: number }) {
   const text = $<HTMLElement>('#winner-text');
   const finalScore = $<HTMLElement>('#gameover-score');
   text.className = `winner-text ${winner}`;
-  text.textContent = `${winner.toUpperCase()} WINS`;
+  text.textContent = `${winner === 'red' ? 'MINT' : 'WHITE'} WINS`;
   finalScore.textContent = `${score.red} — ${score.blue}`;
   overlay.classList.add('show');
 }
@@ -661,11 +675,11 @@ function buildUI() {
               <div class="section-label">Teams</div>
               <div class="teams-grid">
                 <div class="team-column">
-                  <div class="team-title red">RED</div>
+                  <div class="team-title red">MINT</div>
                   <div id="red-slots"></div>
                 </div>
                 <div class="team-column">
-                  <div class="team-title blue">BLUE</div>
+                  <div class="team-title blue">WHITE</div>
                   <div id="blue-slots"></div>
                 </div>
               </div>
@@ -677,8 +691,8 @@ function buildUI() {
             <div>
               <div class="section-label">Join team</div>
               <div class="team-buttons">
-                <button class="btn-team red" data-team="red">Red</button>
-                <button class="btn-team blue" data-team="blue">Blue</button>
+                <button class="btn-team red" data-team="red">Mint</button>
+                <button class="btn-team blue" data-team="blue">White</button>
                 <button class="btn-team spec" data-team="spectator">Spec</button>
               </div>
             </div>
@@ -790,7 +804,7 @@ function buildUI() {
 
     <div id="gameover-overlay" class="gameover-overlay">
       <div class="gameover-banner">
-        <div id="winner-text" class="winner-text red">RED WINS</div>
+        <div id="winner-text" class="winner-text red">MINT WINS</div>
         <div id="gameover-score" class="final-score">5 — 0</div>
         <div class="gameover-sub">Returning to lobby...</div>
       </div>
@@ -868,7 +882,8 @@ function setupEventListeners() {
     if (!code) { errEl.textContent = 'Enter a room code'; return; }
     myName = name;
     errEl.textContent = '';
-    socket.emit('joinRoom', { roomCode: code, name }, (success: boolean, error?: string) => {
+    const auth = getAuthState();
+    socket.emit('joinRoom', { roomCode: code, name, avatarData: auth.user?.avatar_data || undefined }, (success: boolean, error?: string) => {
       if (!success) { errEl.textContent = error ?? 'Could not join'; toast(error ?? 'Could not join', 'error'); }
     });
   }

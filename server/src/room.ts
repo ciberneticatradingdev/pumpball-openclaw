@@ -15,6 +15,7 @@ type RoomPlayerData = {
   id: string;
   name: string;
   team: Team;
+  avatarData?: string;
 };
 
 type RoomInfo = {
@@ -88,10 +89,13 @@ export class Room {
     return `room:${this.code}`;
   }
 
-  addPlayer(id: string, name: string): boolean {
-    if (this.players.size >= MAX_PLAYERS) return false;
-    if (this.status !== 'waiting') return false;
-    this.players.set(id, { id, name, team: 'spectator' });
+  addPlayer(id: string, name: string, avatarData?: string): boolean {
+    // Spectators can always join (unlimited). Only block if active player slots are full.
+    const nonSpectators = Array.from(this.players.values()).filter(p => p.team !== 'spectator').length;
+    if (nonSpectators >= MAX_PLAYERS && this.status === 'waiting') {
+      // Even then, they can still join as spectator
+    }
+    this.players.set(id, { id, name, team: 'spectator', avatarData });
     // Auto-assign host if persistent room is unhosted
     if (!this.hostId || !this.players.has(this.hostId)) {
       this.hostId = id;
@@ -129,6 +133,9 @@ export class Room {
   changeTeam(id: string, team: Team): void {
     const player = this.players.get(id);
     if (!player) return;
+
+    // Can't join a playing team mid-game
+    if (this.status === 'playing' && team !== 'spectator') return;
 
     if (team !== 'spectator') {
       const teamCount = Array.from(this.players.values()).filter(
@@ -360,7 +367,17 @@ export class Room {
   }
 
   isFull(): boolean {
-    return this.players.size >= MAX_PLAYERS;
+    // Only counts non-spectator players; spectators are unlimited
+    const nonSpectators = Array.from(this.players.values()).filter(p => p.team !== 'spectator').length;
+    return nonSpectators >= MAX_PLAYERS;
+  }
+
+  getPlayerAvatars(): Array<{ id: string; avatarData: string }> {
+    const result: Array<{ id: string; avatarData: string }> = [];
+    for (const p of this.players.values()) {
+      if (p.avatarData) result.push({ id: p.id, avatarData: p.avatarData });
+    }
+    return result;
   }
 
   hasPlayer(id: string): boolean {

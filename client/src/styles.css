@@ -11,8 +11,8 @@
   --text-primary: #FFFFFF;
   --text-secondary: #B0B0C8;
   --text-muted: #8B949E;
-  --team-red: #FF4D6A;
-  --team-blue: #4DA6FF;
+  --team-red: #91F1B5;
+  --team-blue: #FFFFFF;
   --border: #2D333B;
   --danger: #ff1744;
   --font: 'Space Mono', 'JetBrains Mono', monospace;
@@ -217,8 +217,8 @@ html, body {
 }
 
 .match-status.playing {
-  background: rgba(255, 77, 106, 0.1); color: var(--team-red);
-  border: 1px solid rgba(255, 77, 106, 0.2);
+  background: rgba(145, 241, 181, 0.1); color: var(--team-red);
+  border: 1px solid rgba(145, 241, 181, 0.2);
   animation: pulse-status 1.5s ease-in-out infinite;
 }
 
@@ -347,8 +347,8 @@ input[type="text"]::placeholder { color: var(--text-muted); }
   text-transform: uppercase; padding: 5px 8px; border-radius: 4px; text-align: center;
 }
 
-.team-title.red { color: var(--team-red); background: rgba(255, 77, 106, 0.08); border: 1px solid rgba(255, 77, 106, 0.2); }
-.team-title.blue { color: var(--team-blue); background: rgba(77, 166, 255, 0.08); border: 1px solid rgba(77, 166, 255, 0.2); }
+.team-title.red { color: var(--team-red); background: rgba(145, 241, 181, 0.08); border: 1px solid rgba(145, 241, 181, 0.2); }
+.team-title.blue { color: var(--team-blue); background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.2); }
 
 .team-slot {
   height: 30px; border-radius: 4px; border: 1px dashed var(--border);
@@ -357,8 +357,8 @@ input[type="text"]::placeholder { color: var(--text-muted); }
 }
 
 .team-slot.filled { border-style: solid; color: var(--text-primary); }
-.team-slot.filled.red { border-color: var(--team-red); background: rgba(255, 77, 106, 0.06); }
-.team-slot.filled.blue { border-color: var(--team-blue); background: rgba(77, 166, 255, 0.06); }
+.team-slot.filled.red { border-color: var(--team-red); background: rgba(145, 241, 181, 0.06); }
+.team-slot.filled.blue { border-color: var(--team-blue); background: rgba(255, 255, 255, 0.06); }
 .team-slot.filled.me { font-weight: 700; }
 
 .spectators-section { display: flex; flex-direction: column; gap: 4px; }
@@ -381,7 +381,7 @@ input[type="text"]::placeholder { color: var(--text-muted); }
 }
 
 .btn-team.red { border-color: var(--team-red); color: var(--team-red); }
-.btn-team.red:hover, .btn-team.red.active { background: var(--team-red); color: #fff; }
+.btn-team.red:hover, .btn-team.red.active { background: var(--team-red); color: #000; }
 .btn-team.blue { border-color: var(--team-blue); color: var(--team-blue); }
 .btn-team.blue:hover, .btn-team.blue.active { background: var(--team-blue); color: #000; }
 .btn-team.spec { border-color: var(--text-muted); color: var(--text-muted); }
@@ -463,7 +463,7 @@ input[type="text"]::placeholder { color: var(--text-muted); }
   letter-spacing: 2px; min-width: 60px; text-align: center;
 }
 
-.topbar-timer.overtime { border-color: var(--team-red); color: var(--team-red); }
+.topbar-timer.overtime { border-color: var(--danger); color: var(--danger); }
 
 .topbar-info {
   display: flex; align-items: center; gap: 6px;
@@ -657,8 +657,8 @@ kbd {
   text-transform: uppercase;
 }
 
-.goal-text.red { color: var(--team-red); text-shadow: 0 0 40px rgba(255, 77, 106, 0.6); }
-.goal-text.blue { color: var(--team-blue); text-shadow: 0 0 40px rgba(77, 166, 255, 0.6); }
+.goal-text.red { color: var(--team-red); text-shadow: 0 0 40px rgba(145, 241, 181, 0.6); }
+.goal-text.blue { color: var(--team-blue); text-shadow: 0 0 40px rgba(255, 255, 255, 0.6); }
 
 .goal-sub { font-size: 16px; color: var(--text-secondary); letter-spacing: 4px; margin-top: 8px; }
 
@@ -679,8 +679,8 @@ kbd {
   font-size: 56px; font-weight: 700; letter-spacing: 6px; text-transform: uppercase;
 }
 
-.winner-text.red { color: var(--team-red); text-shadow: 0 0 50px rgba(255, 77, 106, 0.6); }
-.winner-text.blue { color: var(--team-blue); text-shadow: 0 0 50px rgba(77, 166, 255, 0.6); }
+.winner-text.red { color: var(--team-red); text-shadow: 0 0 50px rgba(145, 241, 181, 0.6); }
+.winner-text.blue { color: var(--team-blue); text-shadow: 0 0 50px rgba(255, 255, 255, 0.6); }
 
 .final-score { font-size: 24px; color: var(--text-secondary); letter-spacing: 6px; margin-top: 12px; }
 .gameover-sub { font-size: 12px; color: var(--text-muted); letter-spacing: 2px; margin-top: 16px; text-transform: uppercase; }

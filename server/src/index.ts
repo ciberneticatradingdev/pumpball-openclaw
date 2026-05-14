@@ -59,9 +59,18 @@ function generateRoomCode(): string {
 io.on('connection', (socket) => {
   console.log(`[+] Player connected: ${socket.id}`);
 
-  socket.on('createRoom', (name: string, callback: (roomCode: string) => void) => {
+  socket.on('createRoom', (data: string | { name: string; avatarData?: string }, callback: (roomCode: string) => void) => {
     const code = generateRoomCode();
-    const playerName = (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 20) : 'Player';
+    let playerName: string;
+    let avatarData: string | undefined;
+    if (typeof data === 'string') {
+      playerName = data.trim() ? data.trim().slice(0, 20) : 'Player';
+    } else if (data && typeof data === 'object') {
+      playerName = (typeof data.name === 'string' && data.name.trim()) ? data.name.trim().slice(0, 20) : 'Player';
+      avatarData = typeof data.avatarData === 'string' ? data.avatarData : undefined;
+    } else {
+      playerName = 'Player';
+    }
     const room = new Room(code, socket.id, playerName, io);
     rooms.set(code, room);
     playerRooms.set(socket.id, code);
@@ -74,7 +83,7 @@ io.on('connection', (socket) => {
   socket.on(
     'joinRoom',
     (
-      data: { roomCode: string; name: string },
+      data: { roomCode: string; name: string; avatarData?: string },
       callback: (success: boolean, error?: string) => void,
     ) => {
       if (!data || typeof data !== 'object') return callback(false, 'Invalid data');
@@ -83,20 +92,32 @@ io.on('connection', (socket) => {
       const playerName = (typeof data.name === 'string' && data.name.trim())
         ? data.name.trim().slice(0, 20)
         : 'Player';
+      const avatarData = typeof data.avatarData === 'string' ? data.avatarData : undefined;
 
       const room = rooms.get(roomCode);
       if (!room) return callback(false, 'Room not found');
-      if (room.isFull()) return callback(false, 'Room is full');
       if (room.hasPlayer(socket.id)) return callback(false, 'Already in this room');
-      if (room.getRoomInfo().status !== 'waiting') return callback(false, 'Game already started');
 
-      const success = room.addPlayer(socket.id, playerName);
+      // Always allow joining (as spectator if game in progress)
+      const success = room.addPlayer(socket.id, playerName, avatarData);
       if (!success) return callback(false, 'Could not join room');
 
       playerRooms.set(socket.id, roomCode);
       socket.join(room.roomKey);
       callback(true);
       socket.emit('roomJoined', room.getRoomInfo());
+
+      // Send existing player avatars to the new joiner
+      const existingAvatars = room.getPlayerAvatars();
+      if (existingAvatars.length > 0) {
+        socket.emit('playerAvatars', existingAvatars);
+      }
+
+      // Broadcast new player's avatar to the room
+      if (avatarData) {
+        socket.to(room.roomKey).emit('playerAvatar', { id: socket.id, avatarData });
+      }
+
       console.log(`[+] ${playerName} (${socket.id}) joined room ${roomCode}`);
     },
   );
