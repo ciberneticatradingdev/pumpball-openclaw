@@ -149,6 +149,22 @@ io.on('connection', (socket) => {
     });
   });
 
+
+  socket.on('getMatches', (callback: (matches: any[]) => void) => {
+    if (typeof callback !== 'function') return;
+    const matches = PERSISTENT_CODES.map((code) => {
+      const room = rooms.get(code);
+      return room ? room.getSummary() : {
+        code,
+        players: 0,
+        redPlayers: 0,
+        bluePlayers: 0,
+        status: 'waiting' as const,
+        score: { red: 0, blue: 0 },
+      };
+    });
+    callback(matches);
+  });
   socket.on('ping', (callback: () => void) => {
     if (typeof callback === 'function') callback();
   });

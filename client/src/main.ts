@@ -108,15 +108,13 @@ function stopMatchesPolling() {
 }
 
 function fetchMatches() {
-  fetch(`${SERVER_URL}/api/matches`)
-    .then(r => r.json())
-    .then((matches: any[]) => {
-      renderMatchCards(matches);
-      const total = matches.reduce((s: number, m: any) => s + m.players, 0);
-      const el = document.getElementById('online-count');
-      if (el) el.textContent = String(total);
-    })
-    .catch(() => { /* offline */ });
+  if (!socket || !socket.connected) return;
+  socket.emit('getMatches', (matches: any[]) => {
+    renderMatchCards(matches);
+    const total = matches.reduce((s: number, m: any) => s + m.players, 0);
+    const el = document.getElementById('online-count');
+    if (el) el.textContent = String(total);
+  });
 }
 
 function renderMatchCards(matches: any[]) {
