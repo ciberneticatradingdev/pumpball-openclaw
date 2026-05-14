@@ -542,7 +542,7 @@ function sidebarHTML(context: 'lobby' | 'game') {
   return `
     <div class="${cls}">
       <div class="sidebar-logo">
-        <span class="pill">💊</span>
+        <img src="/logo.png" alt="PumpBall" class="sidebar-logo-img" />
         <h1>PUMPBALL</h1>
         <div class="tagline">Kick it. Bet it. Degen it.</div>
       </div>
@@ -718,7 +718,7 @@ function buildUI() {
       <!-- Top Bar -->
       <div class="game-topbar">
         <div class="topbar-left">
-          <span class="topbar-logo"><span class="pill">💊</span> PUMPBALL</span>
+          <span class="topbar-logo"><img src="/logo.png" alt="PumpBall" class="topbar-logo-img" /> PUMPBALL</span>
         </div>
         <div class="topbar-center">
           <div class="topbar-score">
