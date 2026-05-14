@@ -6,10 +6,28 @@ import { connectWithWallet, connectLegacy, disconnectWallet, restoreSession, upd
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
+// Random guest name generator
+const ADJECTIVES = ['Fast','Wild','Degen','Based','Pump','Moon','Mega','Ultra','Turbo','Hyper','Giga','Alpha','Sigma','Chad','Anon'];
+const NOUNS = ['Kicker','Degen','Ape','Whale','Trader','Pumper','Baller','Sender','Flipper','Runner','Scorer','Striker','Goat','Fren','Anon'];
+function randomGuestName(): string {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const num = Math.floor(Math.random() * 100);
+  return `${adj}${noun}${num}`;
+}
+
 // ===== STATE =====
 let socket: Socket;
 let myId = '';
 let myName = '';
+let guestName = randomGuestName();
+
+function getPlayerName(): string {
+  const auth = getAuthState();
+  if (auth.user?.username) return auth.user.username;
+  if (myName) return myName;
+  return guestName;
+}
 let myTeam: Team = 'spectator';
 let currentRoom: RoomInfo | null = null;
 let renderer: Renderer | null = null;
@@ -182,12 +200,7 @@ function renderMatchCards(matches: any[]) {
     `;
 
     card.addEventListener('click', () => {
-      const name = $<HTMLInputElement>('#player-name-input').value.trim();
-      if (!name) {
-        toast('Enter your name first', 'error');
-        $<HTMLInputElement>('#player-name-input').focus();
-        return;
-      }
+      const name = getPlayerName();
       myName = name;
       const auth = getAuthState();
       socket.emit('joinRoom', { roomCode: m.code, name, avatarData: auth.user?.avatar_data || undefined }, (success: boolean, error?: string) => {
@@ -583,15 +596,10 @@ function buildUI() {
       ${sidebarHTML('lobby')}
       <main class="lobby-main">
         <div class="lobby-header">
-          <h2>PUMPBALL</h2>
           <div class="online-badge">
             <span class="status-dot"></span>
             <span id="online-count">0</span> online
           </div>
-        </div>
-
-        <div class="lobby-name-row">
-          <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="20" />
         </div>
 
         <section class="matches-section">
@@ -851,7 +859,7 @@ function buildUI() {
 function setupEventListeners() {
   // Lobby — Create custom room
   $<HTMLButtonElement>('#create-room-btn').addEventListener('click', () => {
-    const name = $<HTMLInputElement>('#player-name-input').value.trim() || 'Player';
+    const name = getPlayerName();
     myName = name;
     $<HTMLElement>('#lobby-error').textContent = '';
     socket.emit('createRoom', name, (roomCode: string) => {
@@ -874,7 +882,7 @@ function setupEventListeners() {
 
   // Lobby — Join by code
   function joinRoom() {
-    const name = $<HTMLInputElement>('#player-name-input').value.trim() || 'Player';
+    const name = getPlayerName();
     const code = $<HTMLInputElement>('#join-code-input').value.trim().toUpperCase();
     const errEl = $<HTMLElement>('#lobby-error');
     if (!code) { errEl.textContent = 'Enter a room code'; return; }
@@ -960,7 +968,7 @@ function setupEventListeners() {
           const u = await updateProfile({ username });
           if (u) {
             myName = u.username;
-            $<HTMLInputElement>('#player-name-input').value = u.username;
+            
           }
         }
         if (welcomePendingFile) {
@@ -1037,7 +1045,7 @@ function setupEventListeners() {
           toast('Connected to ' + dw.name + '!', 'success');
           const auth = getAuthState();
           if (auth.user) {
-            $<HTMLInputElement>('#player-name-input').value = auth.user.username;
+            
             myName = auth.user.username;
           }
           if (result.isNewUser) showWelcomeModal();
@@ -1071,7 +1079,7 @@ function setupEventListeners() {
           toast('Connected to ' + lw.name + '!', 'success');
           const auth = getAuthState();
           if (auth.user) {
-            $<HTMLInputElement>('#player-name-input').value = auth.user.username;
+            
             myName = auth.user.username;
           }
           if (result.isNewUser) showWelcomeModal();
@@ -1129,7 +1137,7 @@ function setupEventListeners() {
       if (user) {
         toast('Username updated!', 'success');
         myName = user.username;
-        $<HTMLInputElement>('#player-name-input').value = user.username;
+        
       }
     });
   }
@@ -1385,8 +1393,6 @@ function init() {
       const auth = getAuthState();
       updateWalletUI(auth.connected, auth.user);
       if (auth.user) {
-        const nameInput = document.getElementById('player-name-input') as HTMLInputElement;
-        if (nameInput) nameInput.value = auth.user.username;
         myName = auth.user.username;
       }
     }
