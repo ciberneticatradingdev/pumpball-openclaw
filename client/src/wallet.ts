@@ -1,5 +1,5 @@
-// Lightweight Solana wallet integration — uses Phantom/Solflare's injected provider
-// No heavy SDK needed: window.solana / window.phantom.solana
+// Lightweight Solana wallet integration
+// Supports: Phantom, Solflare, Backpack, any injected provider
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
@@ -22,6 +22,14 @@ type AuthState = {
   user: UserProfile | null;
 };
 
+export type WalletInfo = {
+  name: string;
+  icon: string;
+  installed: boolean;
+  provider: any;
+  url: string; // install URL
+};
+
 const state: AuthState = {
   connected: false,
   wallet: null,
@@ -29,35 +37,51 @@ const state: AuthState = {
   user: null,
 };
 
-// Listeners
 type AuthListener = (state: AuthState) => void;
 const listeners: AuthListener[] = [];
-
 export function onAuthChange(fn: AuthListener) { listeners.push(fn); }
 function notify() { listeners.forEach(fn => fn({ ...state })); }
 
-function getProvider(): any {
-  if ('phantom' in window) {
-    const phantom = (window as any).phantom;
-    if (phantom?.solana?.isPhantom) return phantom.solana;
-  }
-  if ('solana' in window) {
-    const sol = (window as any).solana;
-    if (sol?.isPhantom || sol?.isSolflare) return sol;
-  }
-  return null;
+// Detect available wallets
+export function getAvailableWallets(): WalletInfo[] {
+  const wallets: WalletInfo[] = [];
+  const w = window as any;
+
+  // Phantom
+  const phantom = w.phantom?.solana || (w.solana?.isPhantom ? w.solana : null);
+  wallets.push({
+    name: 'Phantom',
+    icon: '👻',
+    installed: !!phantom,
+    provider: phantom,
+    url: 'https://phantom.app/',
+  });
+
+  // Solflare
+  const solflare = w.solflare || (w.solana?.isSolflare ? w.solana : null);
+  wallets.push({
+    name: 'Solflare',
+    icon: '🔆',
+    installed: !!solflare,
+    provider: solflare,
+    url: 'https://solflare.com/',
+  });
+
+  // Backpack
+  const backpack = w.backpack || w.xnft?.solana;
+  wallets.push({
+    name: 'Backpack',
+    icon: '🎒',
+    installed: !!backpack,
+    provider: backpack,
+    url: 'https://backpack.app/',
+  });
+
+  return wallets;
 }
 
-export function isWalletAvailable(): boolean {
-  return !!getProvider();
-}
-
-export async function connectWallet(): Promise<boolean> {
-  const provider = getProvider();
-  if (!provider) {
-    window.open('https://phantom.app/', '_blank');
-    return false;
-  }
+export async function connectWithProvider(provider: any): Promise<boolean> {
+  if (!provider) return false;
 
   try {
     const resp = await provider.connect();
@@ -65,13 +89,41 @@ export async function connectWallet(): Promise<boolean> {
     state.wallet = wallet;
 
     // Get nonce from server
-    const nonceResp = await fetch(`${SERVER_URL}/api/auth/nonce`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wallet }),
-    });
+    let nonceResp: Response;
+    try {
+      nonceResp = await fetch(`${SERVER_URL}/api/auth/nonce`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet }),
+      });
+    } catch {
+      // Server unreachable — connect without auth (guest mode with wallet)
+      state.connected = true;
+      state.user = {
+        id: '',
+        wallet_address: wallet,
+        username: 'Player_' + wallet.slice(0, 4),
+        avatar_url: null,
+        xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
+      };
+      notify();
+      return true;
+    }
 
-    if (!nonceResp.ok) throw new Error('Failed to get nonce');
+    if (!nonceResp.ok) {
+      // Server error — fallback to guest mode
+      state.connected = true;
+      state.user = {
+        id: '',
+        wallet_address: wallet,
+        username: 'Player_' + wallet.slice(0, 4),
+        avatar_url: null,
+        xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
+      };
+      notify();
+      return true;
+    }
+
     const { nonce } = await nonceResp.json();
 
     // Sign the nonce
@@ -86,28 +138,34 @@ export async function connectWallet(): Promise<boolean> {
       body: JSON.stringify({ wallet, signature }),
     });
 
-    if (!verifyResp.ok) throw new Error('Verification failed');
-    const { token, user } = await verifyResp.json();
+    if (!verifyResp.ok) {
+      // Verification failed but wallet is connected
+      state.connected = true;
+      state.user = {
+        id: '',
+        wallet_address: wallet,
+        username: 'Player_' + wallet.slice(0, 4),
+        avatar_url: null,
+        xp: 0, level: 1, games_played: 0, games_won: 0, goals_scored: 0,
+      };
+      notify();
+      return true;
+    }
 
+    const { token, user } = await verifyResp.json();
     state.connected = true;
     state.token = token;
     state.user = user;
     localStorage.setItem('pb_token', token);
-
     notify();
     return true;
   } catch (err) {
     console.error('Wallet connect failed:', err);
-    state.connected = false;
     return false;
   }
 }
 
 export async function disconnectWallet(): Promise<void> {
-  const provider = getProvider();
-  if (provider) {
-    try { await provider.disconnect(); } catch { /* ok */ }
-  }
   state.connected = false;
   state.wallet = null;
   state.token = null;
@@ -143,53 +201,39 @@ export async function restoreSession(): Promise<boolean> {
 
 export async function updateProfile(data: { username?: string }): Promise<UserProfile | null> {
   if (!state.token) return null;
-
   try {
     const resp = await fetch(`${SERVER_URL}/api/profile`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${state.token}`,
-      },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
       body: JSON.stringify(data),
     });
-
     if (!resp.ok) return null;
     const { user } = await resp.json();
     state.user = user;
     notify();
     return user;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export async function uploadAvatar(file: File): Promise<UserProfile | null> {
   if (!state.token) return null;
-
   try {
     const form = new FormData();
     form.append('avatar', file);
-
     const resp = await fetch(`${SERVER_URL}/api/profile/avatar`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${state.token}` },
       body: form,
     });
-
     if (!resp.ok) return null;
     const { user } = await resp.json();
     state.user = user;
     notify();
     return user;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-export function getAuthState(): AuthState {
-  return { ...state };
-}
+export function getAuthState(): AuthState { return { ...state }; }
 
 export function getAvatarUrl(avatarPath: string | null): string | null {
   if (!avatarPath) return null;

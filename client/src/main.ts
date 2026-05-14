@@ -2,7 +2,7 @@ import './styles.css';
 import { io, Socket } from 'socket.io-client';
 import { Renderer } from './renderer';
 import type { GameState, RoomInfo, ChatMessage, Team, Keyboard } from './types';
-import { connectWallet, disconnectWallet, restoreSession, updateProfile, uploadAvatar, onAuthChange, getAuthState, getAvatarUrl, type UserProfile } from './wallet';
+import { connectWithProvider, disconnectWallet, restoreSession, updateProfile, uploadAvatar, onAuthChange, getAuthState, getAvatarUrl, getAvailableWallets, type UserProfile } from './wallet';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
@@ -796,6 +796,16 @@ function buildUI() {
       </div>
     </div>
 
+    <!-- Wallet Selector Modal -->
+    <div id="wallet-modal" class="wallet-modal-overlay">
+      <div class="wallet-modal">
+        <h3>CONNECT WALLET</h3>
+        <p class="modal-sub">Choose your Solana wallet</p>
+        <div id="wallet-list" class="wallet-list"></div>
+        <button class="wallet-modal-close" id="wallet-modal-close">Cancel</button>
+      </div>
+    </div>
+
     <div id="toast-container" class="toast-container"></div>
   `;
 }
@@ -841,28 +851,63 @@ function setupEventListeners() {
   $<HTMLButtonElement>('#join-room-btn').addEventListener('click', joinRoom);
   $<HTMLInputElement>('#join-code-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
 
-  // === Wallet Connect ===
-  async function handleWalletConnect() {
-    toast('Connecting wallet...', 'info');
-    const ok = await connectWallet();
-    if (ok) {
-      toast('Wallet connected!', 'success');
-      const auth = getAuthState();
-      if (auth.user) {
-        $<HTMLInputElement>('#player-name-input').value = auth.user.username;
-        myName = auth.user.username;
-      }
-    } else {
-      toast('Wallet connection failed or Phantom not installed', 'error');
-    }
+  // === Wallet Connect (with selector modal) ===
+  function showWalletModal() {
+    const modal = document.getElementById('wallet-modal')!;
+    const list = document.getElementById('wallet-list')!;
+    const wallets = getAvailableWallets();
+
+    list.innerHTML = '';
+    wallets.forEach(w => {
+      const btn = document.createElement('button');
+      btn.className = 'wallet-option' + (w.installed ? '' : ' not-installed');
+      btn.innerHTML = `
+        <div class="wallet-icon">${w.icon}</div>
+        <span class="wallet-name">${w.name}</span>
+        <span class="wallet-tag">${w.installed ? 'DETECTED' : 'INSTALL'}</span>
+      `;
+      btn.addEventListener('click', async () => {
+        if (!w.installed) {
+          window.open(w.url, '_blank');
+          return;
+        }
+        modal.classList.remove('show');
+        toast('Connecting to ' + w.name + '...', 'info');
+        const ok = await connectWithProvider(w.provider);
+        if (ok) {
+          toast('Connected to ' + w.name + '!', 'success');
+          const auth = getAuthState();
+          if (auth.user) {
+            $<HTMLInputElement>('#player-name-input').value = auth.user.username;
+            myName = auth.user.username;
+          }
+        } else {
+          toast('Connection failed or rejected', 'error');
+        }
+      });
+      list.appendChild(btn);
+    });
+
+    modal.classList.add('show');
   }
 
-  $<HTMLButtonElement>('#connect-wallet-btn').addEventListener('click', handleWalletConnect);
+  // Close modal
+  const walletModalClose = document.getElementById('wallet-modal-close');
+  if (walletModalClose) walletModalClose.addEventListener('click', () => {
+    document.getElementById('wallet-modal')!.classList.remove('show');
+  });
+  // Close on overlay click
+  const walletModal = document.getElementById('wallet-modal');
+  if (walletModal) walletModal.addEventListener('click', (e) => {
+    if (e.target === walletModal) walletModal.classList.remove('show');
+  });
+
+  $<HTMLButtonElement>('#connect-wallet-btn').addEventListener('click', showWalletModal);
   const gwb = document.getElementById('game-wallet-btn');
-  if (gwb) gwb.addEventListener('click', handleWalletConnect);
+  if (gwb) gwb.addEventListener('click', showWalletModal);
 
   const profileConnectBtn = document.getElementById('profile-connect-btn');
-  if (profileConnectBtn) profileConnectBtn.addEventListener('click', handleWalletConnect);
+  if (profileConnectBtn) profileConnectBtn.addEventListener('click', showWalletModal);
 
   // Disconnect
   const disconnectBtn = document.getElementById('disconnect-wallet-btn');
