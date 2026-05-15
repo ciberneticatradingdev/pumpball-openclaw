@@ -27,6 +27,11 @@ let CANVAS_W = fc.MAP_W * 2;
 let CANVAS_H = fc.MAP_H * 2;
 let fieldCache: HTMLCanvasElement | null = null;
 
+// Preload logo for watermark
+const logoWatermark = new Image();
+logoWatermark.onload = () => { fieldCache = null; }; // invalidate cache so it redraws with logo
+logoWatermark.src = '/logo.png';
+
 function cx(x: number): number { return x + fc.MAP_W; }
 function cy(y: number): number { return y + fc.MAP_H; }
 
@@ -56,15 +61,17 @@ function buildFieldCache(): HTMLCanvasElement {
   ctx.fillStyle = grad;
   ctx.fillRect(cx(-FIELD_W), cy(-FIELD_H), FIELD_W * 2, FIELD_H * 2);
 
-  // Large "P" watermark in center (scale font with field)
-  ctx.save();
-  const watermarkSize = Math.round(280 * (FIELD_W / 550));
-  ctx.font = `bold ${watermarkSize}px "Space Mono", monospace`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'rgba(145, 241, 181, 0.04)';
-  ctx.fillText('P', cx(0), cy(0));
-  ctx.restore();
+  // Logo watermark in center (scale with field size)
+  if (logoWatermark.complete && logoWatermark.naturalWidth > 0) {
+    ctx.save();
+    const logoSize = Math.round(70 * (FIELD_W / 550));
+    const aspect = logoWatermark.naturalWidth / logoWatermark.naturalHeight;
+    const logoW = logoSize * aspect;
+    const logoH = logoSize;
+    ctx.globalAlpha = 0.07;
+    ctx.drawImage(logoWatermark, cx(0) - logoW / 2, cy(0) - logoH / 2, logoW, logoH);
+    ctx.restore();
+  }
 
   // Field border with glow
   ctx.strokeStyle = `rgba(145, 241, 181, ${LINE_ALPHA})`;
@@ -332,16 +339,23 @@ export class Renderer {
     for (const player of players) {
       if (player.team === 'spectator') continue;
       const color = player.team === 'red' ? TEAM_RED : TEAM_BLUE;
+      const glowColor = player.team === 'red' ? 'rgba(145, 241, 181, 0.3)' : 'rgba(255, 255, 255, 0.25)';
       const isMe = player.id === this.myId;
       const px = cx(player.x);
       const py = cy(player.y);
       const avatar = this.avatarCache.get(player.id);
 
-      // Kick ring
+      // Team glow aura — solid ring, no shadowBlur
+      ctx.beginPath();
+      ctx.arc(px, py, PLAYER_R + 5, 0, Math.PI * 2);
+      ctx.fillStyle = glowColor;
+      ctx.fill();
+
+      // Kick ring — team-colored
       if (player.spaceClicked) {
         ctx.beginPath();
         ctx.arc(px, py, PLAYER_R + 8, 0, Math.PI * 2);
-        ctx.strokeStyle = color + '50';
+        ctx.strokeStyle = color + '80';
         ctx.lineWidth = 2;
         ctx.stroke();
       }
@@ -363,15 +377,11 @@ export class Renderer {
         ctx.fill();
       }
 
-      // Border — team colored ring (always visible on top of avatar)
+      // Border — thick team colored ring (always visible on top of avatar)
       ctx.beginPath();
       ctx.arc(px, py, PLAYER_R, 0, Math.PI * 2);
-      if (player.team === 'blue') {
-        ctx.strokeStyle = isMe ? '#91F1B5' : '#8B949E';
-      } else {
-        ctx.strokeStyle = isMe ? '#ffffff' : '#ffffff80';
-      }
-      ctx.lineWidth = isMe ? 2.5 : 1.5;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = isMe ? 4 : 3.5;
       ctx.stroke();
 
       // Self indicator
@@ -383,12 +393,19 @@ export class Renderer {
         ctx.stroke();
       }
 
-      // Name
-      ctx.fillStyle = '#ffffffcc';
+      // Name — team-colored, positioned above player
+      const nameY = py - PLAYER_R - 6;
+      ctx.fillStyle = color;
       ctx.font = `${isMe ? 'bold ' : ''}10px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(player.name.slice(0, 12), px, py - PLAYER_R - 4);
+      ctx.fillText(player.name.slice(0, 12), px, nameY);
+
+      // Team indicator dot above the name
+      ctx.beginPath();
+      ctx.arc(px, nameY - 14, 4, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
     }
   }
 

@@ -52,6 +52,7 @@ export type RoomInfo = {
   status: 'waiting' | 'playing' | 'finished';
   score: { red: number; blue: number };
   mode: GameMode;
+  countdown?: number | null;
 };
 
 export type ChatMessage = {

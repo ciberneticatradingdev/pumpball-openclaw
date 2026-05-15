@@ -26,6 +26,7 @@ type RoomInfo = {
   status: 'waiting' | 'playing' | 'finished';
   score: { red: number; blue: number };
   mode: GameMode;
+  countdown?: number | null;
 };
 
 type GameState = {
@@ -80,6 +81,8 @@ export class Room {
   private goalCooldown = false;
   private timeLeft = MATCH_DURATION;
   private overtime = false;
+  private countdownInterval: ReturnType<typeof setInterval> | null = null;
+  private countdownSeconds = 0;
 
   constructor(
     code: string,
@@ -98,6 +101,7 @@ export class Room {
     this.fieldConfig = getFieldConfig(this.mode);
     if (hostId) {
       this.players.set(hostId, { id: hostId, name: hostName, team: 'spectator' });
+      this.autoAssignTeam(hostId);
     }
   }
 
@@ -106,21 +110,22 @@ export class Room {
   }
 
   addPlayer(id: string, name: string, avatarData?: string): boolean {
-    // Spectators can always join (unlimited). Only block if active player slots are full.
-    const nonSpectators = Array.from(this.players.values()).filter(p => p.team !== 'spectator').length;
-    if (nonSpectators >= this.maxPlayers && this.status === 'waiting') {
-      // Even then, they can still join as spectator
-    }
     this.players.set(id, { id, name, team: 'spectator', avatarData });
-    // Auto-assign host if persistent room is unhosted
     if (!this.hostId || !this.players.has(this.hostId)) {
       this.hostId = id;
     }
+    if (this.status === 'waiting') {
+      this.autoAssignTeam(id);
+    }
     this.broadcastRoomInfo();
+    this.checkAutoStart();
     return true;
   }
 
   removePlayer(id: string): void {
+    const player = this.players.get(id);
+    const wasOnTeam = player?.team !== 'spectator';
+    const playerName = player?.name ?? '';
     this.players.delete(id);
 
     if (id === this.hostId) {
@@ -128,10 +133,12 @@ export class Room {
       if (next) {
         this.hostId = next;
       } else if (this.persistent) {
-        // Persistent: keep room alive, reset for next joiners
         this.hostId = '';
         if (this.status === 'playing') this.reset();
-        else this.broadcastRoomInfo();
+        else {
+          this.cancelCountdown();
+          this.broadcastRoomInfo();
+        }
         return;
       } else {
         this.stopGame();
@@ -141,6 +148,38 @@ export class Room {
 
     if (this.status === 'playing') {
       this.physics?.removePlayer(id);
+
+      if (wasOnTeam) {
+        this.io.to(this.roomKey).emit('playerDisconnected', { name: playerName });
+
+        const redCount = Array.from(this.players.values()).filter(p => p.team === 'red').length;
+        const blueCount = Array.from(this.players.values()).filter(p => p.team === 'blue').length;
+
+        if (redCount === 0 || blueCount === 0) {
+          const winner: 'red' | 'blue' | null =
+            redCount === 0 && blueCount > 0 ? 'blue' :
+            blueCount === 0 && redCount > 0 ? 'red' : null;
+
+          this.io.to(this.roomKey).emit('gameOver', {
+            winner,
+            score: { ...this.score },
+            forfeit: true,
+          });
+
+          if (this.timerInterval) {
+            clearInterval(this.timerInterval);
+            this.timerInterval = null;
+          }
+
+          this.broadcastRoomInfo();
+          setTimeout(() => this.reset(), 4000);
+          return;
+        }
+      }
+    }
+
+    if (wasOnTeam) {
+      this.checkAutoStart();
     }
 
     this.broadcastRoomInfo();
@@ -162,6 +201,7 @@ export class Room {
 
     player.team = team;
     this.broadcastRoomInfo();
+    this.checkAutoStart();
   }
 
   updateInput(id: string, keyboard: Keyboard): void {
@@ -212,6 +252,7 @@ export class Room {
   }
 
   stopGame(): void {
+    this.cancelCountdown();
     this.status = 'waiting';
 
     if (this.physicsInterval) {
@@ -285,13 +326,16 @@ export class Room {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
     }
+    this.cancelCountdown();
     this.physics = null;
     this.status = 'waiting';
     this.score = { red: 0, blue: 0 };
     this.goalCooldown = false;
     this.timeLeft = MATCH_DURATION;
     this.overtime = false;
+    this.io.to(this.roomKey).emit('gameReset');
     this.broadcastRoomInfo();
+    this.checkAutoStart();
   }
 
   private handleGoal(team: 'red' | 'blue'): void {
@@ -320,6 +364,56 @@ export class Room {
       this.physics?.resetPositions();
       this.goalCooldown = false;
     }, 1500);
+  }
+
+  private autoAssignTeam(id: string): void {
+    const player = this.players.get(id);
+    if (!player) return;
+    const redCount = Array.from(this.players.values()).filter(p => p.team === 'red' && p.id !== id).length;
+    const blueCount = Array.from(this.players.values()).filter(p => p.team === 'blue' && p.id !== id).length;
+    if (redCount < this.maxTeamSize && redCount <= blueCount) {
+      player.team = 'red';
+    } else if (blueCount < this.maxTeamSize) {
+      player.team = 'blue';
+    }
+    // else stays spectator (both teams full)
+  }
+
+  private checkAutoStart(): void {
+    if (this.status !== 'waiting') return;
+    const redCount = Array.from(this.players.values()).filter(p => p.team === 'red').length;
+    const blueCount = Array.from(this.players.values()).filter(p => p.team === 'blue').length;
+    if (redCount === this.maxTeamSize && blueCount === this.maxTeamSize) {
+      if (!this.countdownInterval) {
+        this.startCountdown();
+      }
+    } else {
+      this.cancelCountdown();
+    }
+  }
+
+  private startCountdown(): void {
+    this.countdownSeconds = 5;
+    this.io.to(this.roomKey).emit('countdown', { seconds: this.countdownSeconds });
+    this.countdownInterval = setInterval(() => {
+      this.countdownSeconds--;
+      if (this.countdownSeconds <= 0) {
+        clearInterval(this.countdownInterval!);
+        this.countdownInterval = null;
+        this.startGame();
+      } else {
+        this.io.to(this.roomKey).emit('countdown', { seconds: this.countdownSeconds });
+      }
+    }, 1000);
+  }
+
+  private cancelCountdown(): void {
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
+      this.countdownSeconds = 0;
+      this.io.to(this.roomKey).emit('countdownCancelled');
+    }
   }
 
   private broadcastGameState(): void {
@@ -363,6 +457,7 @@ export class Room {
       status: this.status,
       score: { ...this.score },
       mode: this.mode,
+      countdown: this.countdownInterval ? this.countdownSeconds : null,
     };
   }
 

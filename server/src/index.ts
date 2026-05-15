@@ -158,11 +158,9 @@ io.on('connection', (socket) => {
     if (!code) return;
     const room = rooms.get(code);
     if (!room) return;
-    if (room.hostId !== socket.id) return;
-
     const started = room.startGame();
     if (!started) {
-      socket.emit('error', 'Need at least 2 players assigned to teams to start');
+      socket.emit('error', 'Need at least 1 player on each team to start');
     }
   });
 

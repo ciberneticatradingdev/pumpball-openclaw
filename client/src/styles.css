@@ -294,6 +294,49 @@ html, body {
 
 .custom-section { border-top: 1px solid var(--border); padding-top: 24px; }
 
+/* ===== AVATAR PICKER ===== */
+.avatar-picker-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+}
+
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 48px);
+  gap: 12px;
+}
+
+.avatar-item {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.avatar-item:hover {
+  border-color: rgba(145, 241, 181, 0.5);
+  box-shadow: 0 0 14px var(--accent-glow);
+  transform: scale(1.12);
+}
+
+.avatar-item.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 18px var(--accent-glow), 0 0 0 3px rgba(145, 241, 181, 0.25);
+}
+
+.avatar-item img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: block;
+}
+
 .custom-info h3 { font-size: 15px; letter-spacing: 1px; color: var(--text-primary); font-weight: 600; }
 .custom-info p { font-size: 13px; color: var(--text-muted); margin-top: 6px; line-height: 1.6; }
 .lock-icon { margin-right: 4px; }
@@ -1169,3 +1212,62 @@ kbd {
 }
 
 .welcome-skip-btn:hover { color: var(--text-primary); }
+
+/* ===== ROOM MODE BADGE ===== */
+.room-mode-badge {
+  font-size: 36px; font-weight: 900; color: var(--accent);
+  text-shadow: 0 0 28px var(--accent-glow); letter-spacing: 6px;
+  font-family: var(--font-mono); margin-bottom: 10px; line-height: 1;
+}
+
+/* ===== PLAYERS NEEDED ===== */
+.players-needed-msg {
+  font-size: 11px; color: var(--text-muted);
+  letter-spacing: 1px; margin-top: 10px; text-align: center;
+  text-transform: uppercase;
+}
+
+.players-needed-msg.ready {
+  color: var(--accent);
+  text-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* ===== TEAM READY GLOW ===== */
+.team-column.team-ready .team-title.red {
+  border-color: var(--accent);
+  box-shadow: 0 0 16px var(--accent-glow);
+}
+
+.team-column.team-ready .team-title.blue {
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.15);
+}
+
+/* ===== GAME OVER RESULT (VICTORY / DEFEAT / DRAW) ===== */
+.gameover-result {
+  font-size: 42px; font-weight: 900; letter-spacing: 10px;
+  text-transform: uppercase; margin-bottom: 8px;
+  font-family: var(--font-mono); animation: goal-pop 0.35s ease-out;
+}
+
+.gameover-result.victory {
+  color: var(--accent);
+  text-shadow: 0 0 50px var(--accent-glow), 0 0 100px rgba(145, 241, 181, 0.15);
+}
+
+.gameover-result.defeat {
+  color: var(--danger);
+  text-shadow: 0 0 50px rgba(255, 23, 68, 0.4);
+}
+
+.gameover-result.draw {
+  color: var(--text-muted);
+}
+
+.gameover-result.spectator {
+  color: var(--text-secondary);
+  font-size: 32px;
+}
+
+/* Draw team name color */
+.winner-text.draw { color: var(--text-muted); }

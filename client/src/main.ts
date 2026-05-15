@@ -16,6 +16,86 @@ function randomGuestName(): string {
   return `${adj}${noun}${num}`;
 }
 
+// ===== DEFAULT AVATARS =====
+const DEFAULT_AVATARS = [
+  { emoji: '🐸', bg: '#2a6b2a', label: 'Pepe' },
+  { emoji: '😈', bg: '#6b2da8', label: 'Trollface' },
+  { emoji: '😎', bg: '#9b7a00', label: 'Chad' },
+  { emoji: '🦍', bg: '#6b3d2a', label: 'Ape' },
+  { emoji: '🐋', bg: '#1a5fa8', label: 'Whale' },
+  { emoji: '🚀', bg: '#c85a00', label: 'Rocket' },
+  { emoji: '💀', bg: '#222222', label: 'Skull' },
+  { emoji: '🤡', bg: '#c4207a', label: 'Clown' },
+  { emoji: '👽', bg: '#1a8a1a', label: 'Alien' },
+  { emoji: '🔥', bg: '#c82000', label: 'Fire' },
+  { emoji: '⭐', bg: '#a89000', label: 'Star' },
+  { emoji: '🎮', bg: '#0a7a7a', label: 'Gamer' },
+] as const;
+
+let defaultAvatarDataURLs: string[] = [];
+let selectedAvatarIndex = -1;
+
+function generateAvatarDataURL(emoji: string, bg: string): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.arc(64, 64, 64, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.font = '72px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, 64, 70);
+  return canvas.toDataURL('image/png');
+}
+
+function generateDefaultAvatars(): void {
+  defaultAvatarDataURLs = DEFAULT_AVATARS.map(a => generateAvatarDataURL(a.emoji, a.bg));
+  const stored = localStorage.getItem('pumpball_avatar_idx');
+  if (stored !== null) {
+    const idx = parseInt(stored, 10);
+    if (idx >= 0 && idx < defaultAvatarDataURLs.length) selectedAvatarIndex = idx;
+  }
+}
+
+function getSelectedAvatarDataURL(): string | null {
+  if (selectedAvatarIndex >= 0 && selectedAvatarIndex < defaultAvatarDataURLs.length) {
+    return defaultAvatarDataURLs[selectedAvatarIndex];
+  }
+  return null;
+}
+
+function getPlayerAvatarData(): string | undefined {
+  const auth = getAuthState();
+  if (auth.user?.avatar_data) return auth.user.avatar_data;
+  return getSelectedAvatarDataURL() || undefined;
+}
+
+function renderAvatarPicker(): void {
+  const grid = document.getElementById('avatar-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  defaultAvatarDataURLs.forEach((dataURL, idx) => {
+    const item = document.createElement('div');
+    item.className = 'avatar-item' + (idx === selectedAvatarIndex ? ' selected' : '');
+    item.title = DEFAULT_AVATARS[idx].label;
+    const img = document.createElement('img');
+    img.src = dataURL;
+    img.alt = DEFAULT_AVATARS[idx].label;
+    item.appendChild(img);
+    item.addEventListener('click', () => {
+      selectedAvatarIndex = idx;
+      localStorage.setItem('pumpball_avatar_idx', String(idx));
+      grid.querySelectorAll('.avatar-item').forEach((el, i) => {
+        el.classList.toggle('selected', i === idx);
+      });
+    });
+    grid.appendChild(item);
+  });
+}
+
 // ===== STATE =====
 let socket: Socket;
 let myId = '';
@@ -222,8 +302,12 @@ function renderMatchCards(matches: any[]) {
       card.addEventListener('click', () => {
         const name = getPlayerName();
         myName = name;
-        const auth = getAuthState();
-        socket.emit('joinRoom', { roomCode: m.code, name, avatarData: auth.user?.avatar_data || undefined }, (success: boolean, error?: string) => {
+        if (m.status === 'playing') {
+          toast('Joining as spectator...', 'info');
+        } else {
+          toast('Joining team...', 'info');
+        }
+        socket.emit('joinRoom', { roomCode: m.code, name, avatarData: getPlayerAvatarData() }, (success: boolean, error?: string) => {
           if (!success) toast(error || 'Could not join', 'error');
         });
       });
@@ -243,14 +327,25 @@ function formatTime(seconds: number): string {
 // ===== ROOM SCREEN UI =====
 function renderRoomInfo(info: RoomInfo) {
   currentRoom = info;
-  const isHost = info.hostId === myId;
   const mode = info.mode || '4v4';
   const teamSlotCount = mode === '1v1' ? 1 : mode === '2v2' ? 2 : 4;
 
-  $<HTMLElement>('#room-code-value').textContent = `${info.code} (${mode})`;
+  $<HTMLElement>('#room-code-value').textContent = info.code;
+  const modeBadge = document.getElementById('room-mode-badge');
+  if (modeBadge) modeBadge.textContent = mode;
 
-  const startBtn = $<HTMLButtonElement>('#start-game-btn');
-  startBtn.style.display = isHost ? 'block' : 'none';
+  // Update countdown display from room info (e.g. on rejoin)
+  const countdownDisplay = document.getElementById('room-countdown-display');
+  const countdownNumber = document.getElementById('room-countdown-number');
+  const waitingMsg = document.getElementById('room-waiting-msg');
+  if (info.countdown != null) {
+    if (countdownDisplay) countdownDisplay.style.display = '';
+    if (waitingMsg) waitingMsg.style.display = 'none';
+    if (countdownNumber) countdownNumber.textContent = String(info.countdown);
+  } else {
+    if (countdownDisplay) countdownDisplay.style.display = 'none';
+    if (waitingMsg) waitingMsg.style.display = '';
+  }
 
   const redSlots = $<HTMLElement>('#red-slots');
   const blueSlots = $<HTMLElement>('#blue-slots');
@@ -286,6 +381,27 @@ function renderRoomInfo(info: RoomInfo) {
       slot.textContent = 'empty slot';
     }
     blueSlots.appendChild(slot);
+  }
+
+  // Team ready glow
+  const redColumn = redSlots.closest<HTMLElement>('.team-column');
+  const blueColumn = blueSlots.closest<HTMLElement>('.team-column');
+  if (redColumn) redColumn.classList.toggle('team-ready', redPlayers.length >= teamSlotCount);
+  if (blueColumn) blueColumn.classList.toggle('team-ready', bluePlayers.length >= teamSlotCount);
+
+  // Players needed + waiting message with counts
+  const totalPlayers = redPlayers.length + bluePlayers.length;
+  const totalNeeded = teamSlotCount * 2;
+  const stillNeeded = totalNeeded - totalPlayers;
+  const neededEl = document.getElementById('room-players-needed');
+  if (neededEl) {
+    neededEl.textContent = stillNeeded > 0
+      ? `${stillNeeded} more player${stillNeeded !== 1 ? 's' : ''} needed`
+      : '✓ Teams ready!';
+    neededEl.className = `players-needed-msg${stillNeeded === 0 ? ' ready' : ''}`;
+  }
+  if (waitingMsg && info.countdown == null) {
+    waitingMsg.textContent = `Waiting for players... (${totalPlayers}/${totalNeeded})`;
   }
 
   spectatorList.innerHTML = '';
@@ -437,7 +553,18 @@ function setupSocket() {
 
   socket.on('roomUpdated', (info: RoomInfo) => {
     currentRoom = info;
-    if (!isInGame) {
+    const gameScreenActive = document.getElementById('game-screen')?.classList.contains('active');
+    if (gameScreenActive && info.status === 'waiting') {
+      // Fallback: gameReset was missed but room returned to waiting — force transition
+      isInGame = false;
+      prevState = null;
+      targetState = null;
+      document.dispatchEvent(new Event('gameStopped'));
+      hideGameOver();
+      showScreen('room');
+      renderRoomInfo(info);
+      toast('Match ended - returning to lobby', 'info');
+    } else if (!isInGame) {
       renderRoomInfo(info);
     } else {
       const me = info.players.find(p => p.id === myId);
@@ -523,25 +650,57 @@ function setupSocket() {
     addSystemMessage(gameChat, '⚡ OVERTIME! 1 extra minute!');
   });
 
-  socket.on('gameOver', (data: { winner: Team | null; score: { red: number; blue: number } }) => {
+  socket.on('playerDisconnected', (data: { name: string }) => {
+    const gameChat = $<HTMLElement>('#game-chat-messages');
+    addSystemMessage(gameChat, `${data.name} disconnected`);
+    toast(`${data.name} left the match`, 'info');
+  });
+
+  socket.on('gameOver', (data: { winner: Team | null; score: { red: number; blue: number }; forfeit?: boolean }) => {
     isInGame = false;
     document.dispatchEvent(new Event('gameStopped'));
 
-    if (data.winner) {
-      showGameOver(data.winner, data.score);
-    } else {
-      showGameOver('red', data.score); // draw edge case
-    }
+    showGameOver(data.winner, data.score, data.forfeit);
 
     const gameChat = $<HTMLElement>('#game-chat-messages');
-    const teamName = data.winner ? (data.winner === 'red' ? 'MINT' : 'WHITE') : 'DRAW';
-    addSystemMessage(gameChat, `GAME OVER! ${teamName}${data.winner ? ' WINS!' : '!'} Final: ${data.score.red} - ${data.score.blue}`);
+    if (data.forfeit && data.winner) {
+      const teamName = data.winner === 'red' ? 'MINT' : 'WHITE';
+      addSystemMessage(gameChat, `GAME OVER! ${teamName} WINS BY FORFEIT!`);
+      toast(`${teamName} wins by forfeit!`, 'info');
+    } else {
+      const teamName = data.winner ? (data.winner === 'red' ? 'MINT' : 'WHITE') : 'DRAW';
+      addSystemMessage(gameChat, `GAME OVER! ${teamName}${data.winner ? ' WINS!' : '!'} Final: ${data.score.red} - ${data.score.blue}`);
+    }
+    // gameReset event will handle transition back to room screen after server's 4s delay
+  });
 
-    setTimeout(() => {
-      hideGameOver();
-      showScreen('lobby');
-      startMatchesPolling();
-    }, 4000);
+  socket.on('gameReset', () => {
+    isInGame = false;
+    prevState = null;
+    targetState = null;
+    document.dispatchEvent(new Event('gameStopped'));
+    hideGameOver();
+    showScreen('room');
+    if (currentRoom) renderRoomInfo(currentRoom);
+    toast('Match ended - returning to lobby', 'info');
+  });
+
+  socket.on('countdown', (data: { seconds: number }) => {
+    const countdownDisplay = document.getElementById('room-countdown-display');
+    const countdownNumber = document.getElementById('room-countdown-number');
+    const waitingMsg = document.getElementById('room-waiting-msg');
+    if (countdownDisplay) countdownDisplay.style.display = '';
+    if (waitingMsg) waitingMsg.style.display = 'none';
+    if (countdownNumber) countdownNumber.textContent = String(data.seconds);
+    if (data.seconds === 5) toast('Game starting in 5...', 'info');
+  });
+
+  socket.on('countdownCancelled', () => {
+    const countdownDisplay = document.getElementById('room-countdown-display');
+    const waitingMsg = document.getElementById('room-waiting-msg');
+    if (countdownDisplay) countdownDisplay.style.display = 'none';
+    if (waitingMsg) waitingMsg.style.display = '';
+    toast('Countdown cancelled - waiting for players', 'info');
   });
 
   socket.on('chatMessage', (msg: ChatMessage) => {
@@ -568,14 +727,54 @@ function showGoalOverlay(team: Team, score: { red: number; blue: number }) {
   setTimeout(() => overlay.classList.remove('show'), 1500);
 }
 
-function showGameOver(winner: Team, score: { red: number; blue: number }) {
+function showGameOver(winner: Team | null, score: { red: number; blue: number }, forfeit?: boolean) {
   const overlay = $<HTMLElement>('#gameover-overlay');
+  const resultEl = document.getElementById('gameover-result');
   const text = $<HTMLElement>('#winner-text');
   const finalScore = $<HTMLElement>('#gameover-score');
-  text.className = `winner-text ${winner}`;
-  text.textContent = `${winner === 'red' ? 'MINT' : 'WHITE'} WINS`;
-  finalScore.textContent = `${score.red} — ${score.blue}`;
+  const countdownEl = document.getElementById('gameover-countdown');
+
+  let resultText: string;
+  let resultClass: string;
+  if (!winner) {
+    resultText = 'DRAW';
+    resultClass = 'draw';
+  } else if (myTeam === 'spectator') {
+    resultText = winner === 'red' ? 'MINT WINS' : 'WHITE WINS';
+    resultClass = 'spectator';
+  } else if (winner === myTeam) {
+    resultText = 'VICTORY';
+    resultClass = 'victory';
+  } else {
+    resultText = 'DEFEAT';
+    resultClass = 'defeat';
+  }
+
+  if (resultEl) {
+    resultEl.textContent = resultText;
+    resultEl.className = `gameover-result ${resultClass}`;
+  }
+
+  text.className = `winner-text ${winner || 'draw'}`;
+  if (winner) {
+    const teamName = winner === 'red' ? 'MINT' : 'WHITE';
+    text.textContent = forfeit ? `${teamName} WINS BY FORFEIT` : `${teamName} WINS`;
+  } else {
+    text.textContent = 'DRAW';
+  }
+
+  finalScore.textContent = `MINT ${score.red}  —  ${score.blue} WHITE`;
   overlay.classList.add('show');
+
+  let secs = 4;
+  if (countdownEl) countdownEl.textContent = `Returning to lobby in ${secs}...`;
+  const cdInterval = setInterval(() => {
+    secs--;
+    if (countdownEl) {
+      countdownEl.textContent = secs > 0 ? `Returning to lobby in ${secs}...` : 'Returning to lobby...';
+    }
+    if (secs <= 0) clearInterval(cdInterval);
+  }, 1000);
 }
 
 function hideGameOver() { $<HTMLElement>('#gameover-overlay').classList.remove('show'); }
@@ -657,6 +856,15 @@ function buildUI() {
 
         <div id="lobby-error" class="error-msg"></div>
 
+        <!-- Avatar Picker Section -->
+        <section class="avatar-picker-section" id="avatar-picker-section">
+          <div class="section-heading">
+            <h2>Choose Avatar</h2>
+            <span class="heading-sub">Pick your meme character · All players</span>
+          </div>
+          <div id="avatar-grid" class="avatar-grid"></div>
+        </section>
+
           <!-- Profile Section (hidden by default, shown via nav) -->
           <div id="profile-section" class="profile-screen">
             <div id="profile-connected" style="display:none">
@@ -701,6 +909,7 @@ function buildUI() {
       <div class="room-layout">
         <div class="room-sidebar">
           <div class="room-header">
+            <div id="room-mode-badge" class="room-mode-badge">4v4</div>
             <div class="room-code-display">
               <span class="label">Room</span>
               <span id="room-code-value" class="room-code" title="Click to copy">------</span>
@@ -720,6 +929,7 @@ function buildUI() {
                   <div id="blue-slots"></div>
                 </div>
               </div>
+              <div id="room-players-needed" class="players-needed-msg"></div>
             </div>
             <div class="spectators-section">
               <div class="section-label">Spectators</div>
@@ -735,7 +945,11 @@ function buildUI() {
             </div>
           </div>
           <div class="room-footer">
-            <button id="start-game-btn" class="btn btn-primary" style="display:none">▶ START GAME</button>
+            <div id="room-countdown-display" style="display:none; text-align:center; margin-bottom:8px">
+              <div id="room-countdown-number" style="font-size:56px; font-weight:900; line-height:1; color:var(--accent, #00ff88); text-shadow:0 0 20px var(--accent, #00ff88)">5</div>
+              <div style="font-size:11px; letter-spacing:2px; color:var(--text-muted, #888); margin-top:4px">GAME STARTING</div>
+            </div>
+            <div id="room-waiting-msg" style="text-align:center; font-size:12px; color:var(--text-muted, #888); margin-bottom:8px">Waiting for players...</div>
             <button id="leave-room-btn" class="btn btn-danger btn-sm">Leave Room</button>
           </div>
         </div>
@@ -841,9 +1055,10 @@ function buildUI() {
 
     <div id="gameover-overlay" class="gameover-overlay">
       <div class="gameover-banner">
+        <div id="gameover-result" class="gameover-result victory">VICTORY</div>
         <div id="winner-text" class="winner-text red">MINT WINS</div>
         <div id="gameover-score" class="final-score">5 — 0</div>
-        <div class="gameover-sub">Returning to lobby...</div>
+        <div id="gameover-countdown" class="gameover-sub">Returning to lobby in 4...</div>
       </div>
     </div>
 
@@ -919,8 +1134,7 @@ function setupEventListeners() {
     if (!code) { errEl.textContent = 'Enter a room code'; return; }
     myName = name;
     errEl.textContent = '';
-    const auth = getAuthState();
-    socket.emit('joinRoom', { roomCode: code, name, avatarData: auth.user?.avatar_data || undefined }, (success: boolean, error?: string) => {
+    socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData() }, (success: boolean, error?: string) => {
       if (!success) { errEl.textContent = error ?? 'Could not join'; toast(error ?? 'Could not join', 'error'); }
     });
   }
@@ -1217,16 +1431,19 @@ function setupEventListeners() {
       const customSection = document.querySelector('.custom-section') as HTMLElement;
       const nameRow = document.querySelector('.lobby-name-row') as HTMLElement;
       const profileSection = document.getElementById('profile-section') as HTMLElement;
+      const avatarPickerSection = document.getElementById('avatar-picker-section') as HTMLElement;
 
       if (nav === 'play') {
         if (matchesSection) matchesSection.style.display = '';
         if (customSection) customSection.style.display = '';
         if (nameRow) nameRow.style.display = '';
+        if (avatarPickerSection) avatarPickerSection.style.display = '';
         if (profileSection) profileSection.classList.remove('active');
       } else if (nav === 'profile') {
         if (matchesSection) matchesSection.style.display = 'none';
         if (customSection) customSection.style.display = 'none';
         if (nameRow) nameRow.style.display = 'none';
+        if (avatarPickerSection) avatarPickerSection.style.display = 'none';
         if (profileSection) profileSection.classList.add('active');
       } else if (nav === 'leaderboard') {
         toast('Leaderboard — coming soon', 'info');
@@ -1245,9 +1462,6 @@ function setupEventListeners() {
     startMatchesPolling();
     toast('Left room', 'info');
   });
-
-  // Room — Start
-  $<HTMLButtonElement>('#start-game-btn').addEventListener('click', () => { socket.emit('startGame'); });
 
   // Room — Copy code
   $<HTMLElement>('#room-code-value').addEventListener('click', () => {
@@ -1410,10 +1624,12 @@ function updateWalletUI(connected: boolean, user: UserProfile | null) {
 }
 
 function init() {
+  generateDefaultAvatars();
   buildUI();
   setupSocket();
   setupKeyboard();
   setupEventListeners();
+  renderAvatarPicker();
   startRenderLoop();
   renderSkeletonCards();
   startMatchesPolling();
