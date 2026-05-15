@@ -64,12 +64,12 @@ function buildFieldCache(): HTMLCanvasElement {
   // Logo watermark in center (scale with field size)
   if (logoWatermark.complete && logoWatermark.naturalWidth > 0) {
     ctx.save();
-    const logoSize = Math.round(70 * (FIELD_W / 550));
+    const logoSize = Math.round(180 * (FIELD_W / 550));
     const aspect = logoWatermark.naturalWidth / logoWatermark.naturalHeight;
     const logoW = logoSize * aspect;
     const logoH = logoSize;
-    ctx.globalAlpha = 0.07;
-    ctx.drawImage(logoWatermark, cx(0) - logoW / 2, cy(0) - logoH / 2, logoW, logoH);
+    ctx.globalAlpha = 0.14;
+    ctx.drawImage(logoWatermark, cx(0) - logoW / 2, cy(0) - logoH / 2 + 8, logoW, logoH);
     ctx.restore();
   }
 
