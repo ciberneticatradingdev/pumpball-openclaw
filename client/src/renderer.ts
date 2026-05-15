@@ -30,7 +30,7 @@ let fieldCache: HTMLCanvasElement | null = null;
 // Preload logo for watermark
 const logoWatermark = new Image();
 logoWatermark.onload = () => { fieldCache = null; }; // invalidate cache so it redraws with logo
-logoWatermark.src = '/logo.png';
+logoWatermark.src = '/logo-full.png';
 
 function cx(x: number): number { return x + fc.MAP_W; }
 function cy(y: number): number { return y + fc.MAP_H; }
@@ -68,7 +68,7 @@ function buildFieldCache(): HTMLCanvasElement {
     const aspect = logoWatermark.naturalWidth / logoWatermark.naturalHeight;
     const logoW = logoSize * aspect;
     const logoH = logoSize;
-    ctx.globalAlpha = 0.14;
+    ctx.globalAlpha = 0.25;
     ctx.drawImage(logoWatermark, cx(0) - logoW / 2, cy(0) - logoH / 2 + 8, logoW, logoH);
     ctx.restore();
   }
