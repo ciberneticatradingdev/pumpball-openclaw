@@ -18,6 +18,7 @@ const io = new Server(httpServer, {
     origin: '*',
     methods: ['GET', 'POST'],
   },
+  maxHttpBufferSize: 5e6, // 5MB — wallet avatars can be large base64
 });
 
 const rooms = new Map<string, Room>();

@@ -394,18 +394,11 @@ export class Renderer {
       }
 
       // Name — team-colored, positioned above player
-      const nameY = py - PLAYER_R - 6;
       ctx.fillStyle = color;
       ctx.font = `${isMe ? 'bold ' : ''}10px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(player.name.slice(0, 12), px, nameY);
-
-      // Team indicator dot above the name
-      ctx.beginPath();
-      ctx.arc(px, nameY - 14, 4, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
+      ctx.fillText(player.name.slice(0, 12), px, py - PLAYER_R - 4);
     }
   }
 

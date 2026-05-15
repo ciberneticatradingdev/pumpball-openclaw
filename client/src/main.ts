@@ -531,11 +531,28 @@ function setupSocket() {
     if (renderer && info.mode) {
       renderer.setFieldConfig(info.mode);
     }
-    showScreen('room');
-    renderRoomInfo(info);
-    const roomChat = $<HTMLElement>('#room-chat-messages');
-    roomChat.innerHTML = '';
-    addSystemMessage(roomChat, `Joined room ${info.code} (${info.mode || '4v4'})`);
+
+    // If game is already playing, go straight to game screen as spectator
+    if (info.status === 'playing') {
+      isInGame = true;
+      prevState = null;
+      targetState = null;
+      document.dispatchEvent(new Event('gameStarted'));
+      showScreen('game');
+      if (renderer) renderer.resize();
+      const codeEl = document.getElementById('topbar-room-code');
+      if (codeEl) codeEl.textContent = info.code;
+      const gameChat = $<HTMLElement>('#game-chat-messages');
+      gameChat.innerHTML = '';
+      addSystemMessage(gameChat, `Joined room ${info.code} as spectator`);
+      toast('Watching match as spectator', 'info');
+    } else {
+      showScreen('room');
+      renderRoomInfo(info);
+      const roomChat = $<HTMLElement>('#room-chat-messages');
+      roomChat.innerHTML = '';
+      addSystemMessage(roomChat, `Joined room ${info.code} (${info.mode || '4v4'})`);
+    }
   });
 
   // Avatar events — receive once per player, cache in renderer
@@ -768,16 +785,21 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
 
   let secs = 4;
   if (countdownEl) countdownEl.textContent = `Returning to lobby in ${secs}...`;
-  const cdInterval = setInterval(() => {
+  if (gameOverCountdownInterval) clearInterval(gameOverCountdownInterval);
+  gameOverCountdownInterval = setInterval(() => {
     secs--;
     if (countdownEl) {
       countdownEl.textContent = secs > 0 ? `Returning to lobby in ${secs}...` : 'Returning to lobby...';
     }
-    if (secs <= 0) clearInterval(cdInterval);
+    if (secs <= 0) { clearInterval(gameOverCountdownInterval!); gameOverCountdownInterval = null; }
   }, 1000);
 }
 
-function hideGameOver() { $<HTMLElement>('#gameover-overlay').classList.remove('show'); }
+let gameOverCountdownInterval: ReturnType<typeof setInterval> | null = null;
+function hideGameOver() {
+  if (gameOverCountdownInterval) { clearInterval(gameOverCountdownInterval); gameOverCountdownInterval = null; }
+  $<HTMLElement>('#gameover-overlay').classList.remove('show');
+}
 
 // ===== SIDEBAR HTML (shared) =====
 function sidebarHTML(context: 'lobby' | 'game') {
@@ -840,6 +862,15 @@ function buildUI() {
           <div id="matches-grid" class="matches-grid"></div>
         </section>
 
+        <!-- Avatar Picker Section -->
+        <section class="avatar-picker-section" id="avatar-picker-section">
+          <div class="section-heading">
+            <h2>Choose Avatar</h2>
+            <span class="heading-sub">Pick your meme character</span>
+          </div>
+          <div id="avatar-grid" class="avatar-grid"></div>
+        </section>
+
         <section class="custom-section">
           <div class="custom-info">
             <h3><span class="lock-icon">🔒</span> Custom Match</h3>
@@ -855,15 +886,6 @@ function buildUI() {
         </section>
 
         <div id="lobby-error" class="error-msg"></div>
-
-        <!-- Avatar Picker Section -->
-        <section class="avatar-picker-section" id="avatar-picker-section">
-          <div class="section-heading">
-            <h2>Choose Avatar</h2>
-            <span class="heading-sub">Pick your meme character · All players</span>
-          </div>
-          <div id="avatar-grid" class="avatar-grid"></div>
-        </section>
 
           <!-- Profile Section (hidden by default, shown via nav) -->
           <div id="profile-section" class="profile-screen">
