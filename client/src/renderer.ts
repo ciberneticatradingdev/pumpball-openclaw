@@ -94,11 +94,7 @@ function buildFieldCache(): HTMLCanvasElement {
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Center dot
-  ctx.beginPath();
-  ctx.arc(cx(0), cy(0), 4, 0, Math.PI * 2);
-  ctx.fillStyle = `rgba(145, 241, 181, ${LINE_ALPHA + 0.2})`;
-  ctx.fill();
+
 
   // Penalty areas (scale proportionally)
   const penaltyW = Math.round(160 * (FIELD_W / 550));
