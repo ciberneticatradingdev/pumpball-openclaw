@@ -578,9 +578,11 @@ function setupSocket() {
       targetState = null;
       document.dispatchEvent(new Event('gameStopped'));
       hideGameOver();
-      showScreen('room');
-      renderRoomInfo(info);
-      toast('Match ended - returning to lobby', 'info');
+      socket.emit('leaveRoom');
+      currentRoom = null;
+      showScreen('lobby');
+      startMatchesPolling();
+      toast('Match ended', 'info');
     } else if (!isInGame) {
       renderRoomInfo(info);
     } else {
@@ -697,9 +699,12 @@ function setupSocket() {
     targetState = null;
     document.dispatchEvent(new Event('gameStopped'));
     hideGameOver();
-    showScreen('room');
-    if (currentRoom) renderRoomInfo(currentRoom);
-    toast('Match ended - returning to lobby', 'info');
+    // Leave the room and go back to main lobby
+    socket.emit('leaveRoom');
+    currentRoom = null;
+    showScreen('lobby');
+    startMatchesPolling();
+    toast('Match ended', 'info');
   });
 
   socket.on('countdown', (data: { seconds: number }) => {
@@ -781,6 +786,7 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
   }
 
   finalScore.textContent = `MINT ${score.red}  —  ${score.blue} WHITE`;
+  overlay.style.display = '';  // reset inline override from hideGameOver
   overlay.classList.add('show');
 
   let secs = 4;
@@ -798,7 +804,9 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
 let gameOverCountdownInterval: ReturnType<typeof setInterval> | null = null;
 function hideGameOver() {
   if (gameOverCountdownInterval) { clearInterval(gameOverCountdownInterval); gameOverCountdownInterval = null; }
-  $<HTMLElement>('#gameover-overlay').classList.remove('show');
+  const overlay = $<HTMLElement>('#gameover-overlay');
+  overlay.classList.remove('show');
+  overlay.style.display = 'none';
 }
 
 // ===== SIDEBAR HTML (shared) =====
