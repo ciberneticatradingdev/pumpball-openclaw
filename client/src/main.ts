@@ -889,14 +889,24 @@ function setupSocket() {
     // gameReset event will handle transition back to room screen after server's 4s delay
   });
 
-  socket.on('gameReset', () => {
-    // Game ended, now in rematch phase — keep game over overlay visible
-    // Don't transition yet — wait for rematch accept/expire
+  socket.on('gameReset', (data?: { canRematch?: boolean }) => {
     isInGame = false;
     prevState = null;
     targetState = null;
     document.dispatchEvent(new Event('gameStopped'));
-    // isGameOver stays true — overlay stays visible until rematch or expire
+
+    if (data?.canRematch === false) {
+      // No rematch possible (forfeit, not enough players) — go to lobby
+      isGameOver = false;
+      matchGoals = [];
+      hideGameOver();
+      socket.emit('leaveRoom');
+      currentRoom = null;
+      showScreen('lobby');
+      startMatchesPolling();
+      toast('Match ended', 'info');
+    }
+    // If canRematch is true, keep game over overlay visible for rematch decision
   });
 
   socket.on('rematchStatus', (data: { accepted: string[]; needed: number }) => {
@@ -909,16 +919,17 @@ function setupSocket() {
 
   socket.on('rematchExpired', () => {
     // Rematch timed out or declined — everyone goes to lobby
+    if (!isGameOver && !currentRoom) return; // already handled
     isGameOver = false;
+    isInGame = false;
     matchGoals = [];
     hideGameOver();
     socket.emit('leaveRoom');
     currentRoom = null;
-    isInGame = false;
     document.dispatchEvent(new Event('gameStopped'));
     showScreen('lobby');
     startMatchesPolling();
-    toast('Rematch expired — returning to lobby', 'info');
+    toast('Opponent left — returning to lobby', 'info');
   });
 
   socket.on('countdown', (data: { seconds: number }) => {

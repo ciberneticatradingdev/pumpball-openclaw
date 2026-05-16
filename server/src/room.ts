@@ -397,19 +397,30 @@ export class Room {
     this.timeLeft = MATCH_DURATION;
     this.overtime = false;
 
-    // Start rematch phase — wait for explicit acceptance
-    this.rematchReady.clear();
-    this.awaitingRematch = true;
-    this.io.to(this.roomKey).emit('gameReset');
-    this.broadcastRoomInfo();
+    // Check if enough players on teams for a rematch
+    const activePlayers = this.getActivePlayers();
+    const hasEnoughForRematch = activePlayers.length >= 2;
 
-    // Timeout: if not everyone accepts in 20s, kick all to lobby
-    if (this.rematchTimeout) clearTimeout(this.rematchTimeout);
-    this.rematchTimeout = setTimeout(() => {
-      if (this.awaitingRematch) {
-        this.cancelRematch();
-      }
-    }, 20000);
+    if (hasEnoughForRematch) {
+      // Start rematch phase — wait for explicit acceptance
+      this.rematchReady.clear();
+      this.awaitingRematch = true;
+      this.io.to(this.roomKey).emit('gameReset', { canRematch: true });
+      this.broadcastRoomInfo();
+
+      // Timeout: if not everyone accepts in 20s, kick all to lobby
+      if (this.rematchTimeout) clearTimeout(this.rematchTimeout);
+      this.rematchTimeout = setTimeout(() => {
+        if (this.awaitingRematch) {
+          this.cancelRematch();
+        }
+      }, 20000);
+    } else {
+      // Not enough players (forfeit, everyone left) — no rematch, just reset
+      this.awaitingRematch = false;
+      this.io.to(this.roomKey).emit('gameReset', { canRematch: false });
+      this.broadcastRoomInfo();
+    }
   }
 
   private handleGoal(team: 'red' | 'blue'): void {
