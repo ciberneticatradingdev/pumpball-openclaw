@@ -145,6 +145,7 @@ let renderer: Renderer | null = null;
 let isInGame = false;
 let matchesInterval: ReturnType<typeof setInterval> | null = null;
 let currentPing = 0;
+let isGameOver = false;
 
 // Match scorers tracking
 type MatchGoal = { scorerName: string; team: Team; minute: number };
@@ -722,33 +723,24 @@ function setupSocket() {
 
   socket.on('roomUpdated', (info: RoomInfo) => {
     currentRoom = info;
-    const gameScreenActive = document.getElementById('game-screen')?.classList.contains('active');
-    if (gameScreenActive && info.status === 'waiting') {
-      // Fallback: gameReset was missed but room returned to waiting — force transition
-      isInGame = false;
-      prevState = null;
-      targetState = null;
-      document.dispatchEvent(new Event('gameStopped'));
-      hideGameOver();
-      socket.emit('leaveRoom');
-      currentRoom = null;
-      showScreen('lobby');
-      startMatchesPolling();
-      toast('Match ended', 'info');
-    } else if (!isInGame) {
+    const me = info.players.find(p => p.id === myId);
+    if (me) myTeam = me.team;
+
+    if (!isInGame && !isGameOver) {
+      // On room screen — update UI
       renderRoomInfo(info);
-    } else {
-      const me = info.players.find(p => p.id === myId);
-      if (me) myTeam = me.team;
     }
+    // No forced leave on status change — gameReset handles transitions
   });
 
   socket.on('gameStarted', () => {
     isInGame = true;
+    isGameOver = false;
     prevState = null;
     targetState = null;
     matchGoals = [];
     matchStartTime = Date.now();
+    hideGameOver(); // clear any lingering overlay
     playGameStartSound();
     document.dispatchEvent(new Event('gameStarted'));
     showScreen('game');
@@ -843,6 +835,7 @@ function setupSocket() {
 
   socket.on('gameOver', (data: { winner: Team | null; score: { red: number; blue: number }; forfeit?: boolean }) => {
     isInGame = false;
+    isGameOver = true;
     document.dispatchEvent(new Event('gameStopped'));
     playGameOverSound();
     showGameOver(data.winner, data.score, data.forfeit);
@@ -861,6 +854,7 @@ function setupSocket() {
 
   socket.on('gameReset', () => {
     isInGame = false;
+    isGameOver = false;
     prevState = null;
     targetState = null;
     matchGoals = [];
@@ -869,6 +863,7 @@ function setupSocket() {
     // Stay in room for rematch — go to room screen, not lobby
     if (currentRoom) {
       showScreen('room');
+      renderRoomInfo(currentRoom); // refresh room UI with current state
       toast('Match ended — waiting for next game', 'info');
     } else {
       showScreen('lobby');
@@ -992,12 +987,15 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
     rematchBtn.style.display = '';
     rematchBtn.textContent = isPersistent ? '\u26A1 NEXT GAME' : '\u26A1 REMATCH';
     rematchBtn.onclick = () => {
+      isGameOver = false;
       hideGameOver();
       showScreen('room');
+      if (currentRoom) renderRoomInfo(currentRoom);
     };
   }
   if (leaveBtn) {
     leaveBtn.onclick = () => {
+      isGameOver = false;
       hideGameOver();
       socket.emit('leaveRoom');
       currentRoom = null;
@@ -1781,7 +1779,8 @@ function setupEventListeners() {
   // Room — Leave
   $<HTMLButtonElement>('#leave-room-btn').addEventListener('click', () => {
     socket.emit('leaveRoom');
-    currentRoom = null; isInGame = false;
+    currentRoom = null; isInGame = false; isGameOver = false;
+    hideGameOver();
     document.dispatchEvent(new Event('gameStopped'));
     showScreen('lobby');
     startMatchesPolling();
@@ -1822,7 +1821,8 @@ function setupEventListeners() {
   // Game — Leave
   $<HTMLButtonElement>('#game-leave-btn').addEventListener('click', () => {
     socket.emit('leaveRoom');
-    currentRoom = null; isInGame = false;
+    currentRoom = null; isInGame = false; isGameOver = false;
+    hideGameOver();
     document.dispatchEvent(new Event('gameStopped'));
     showScreen('lobby');
     startMatchesPolling();
