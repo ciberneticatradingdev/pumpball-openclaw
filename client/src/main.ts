@@ -145,6 +145,11 @@ let renderer: Renderer | null = null;
 let isInGame = false;
 let matchesInterval: ReturnType<typeof setInterval> | null = null;
 let currentPing = 0;
+
+// Match scorers tracking
+type MatchGoal = { scorerName: string; team: Team; minute: number };
+let matchGoals: MatchGoal[] = [];
+let matchStartTime = 0;
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 
 // Interpolation state
@@ -742,6 +747,8 @@ function setupSocket() {
     isInGame = true;
     prevState = null;
     targetState = null;
+    matchGoals = [];
+    matchStartTime = Date.now();
     playGameStartSound();
     document.dispatchEvent(new Event('gameStarted'));
     showScreen('game');
@@ -801,6 +808,9 @@ function setupSocket() {
   socket.on('goal', (data: { team: Team; score: { red: number; blue: number }; scorerId?: string; scorerName?: string }) => {
     playGoalSound();
     showGoalOverlay(data.team, data.score, data.scorerName);
+    const elapsed = Math.floor((Date.now() - matchStartTime) / 1000);
+    const minute = Math.floor(elapsed / 60);
+    matchGoals.push({ scorerName: data.scorerName || 'Unknown', team: data.team, minute });
     const sr = document.getElementById('topbar-score-red');
     const sb = document.getElementById('topbar-score-blue');
     if (sr) sr.textContent = String(data.score.red);
@@ -853,14 +863,18 @@ function setupSocket() {
     isInGame = false;
     prevState = null;
     targetState = null;
+    matchGoals = [];
     document.dispatchEvent(new Event('gameStopped'));
     hideGameOver();
-    // Leave the room and go back to main lobby
-    socket.emit('leaveRoom');
-    currentRoom = null;
-    showScreen('lobby');
-    startMatchesPolling();
-    toast('Match ended', 'info');
+    // Stay in room for rematch — go to room screen, not lobby
+    if (currentRoom) {
+      showScreen('room');
+      toast('Match ended — waiting for next game', 'info');
+    } else {
+      showScreen('lobby');
+      startMatchesPolling();
+      toast('Match ended', 'info');
+    }
   });
 
   socket.on('countdown', (data: { seconds: number }) => {
@@ -922,6 +936,10 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
   const text = $<HTMLElement>('#winner-text');
   const finalScore = $<HTMLElement>('#gameover-score');
   const countdownEl = document.getElementById('gameover-countdown');
+  const scorersEl = document.getElementById('gameover-scorers');
+  const actionsEl = document.getElementById('gameover-actions');
+  const rematchBtn = document.getElementById('gameover-rematch-btn');
+  const leaveBtn = document.getElementById('gameover-leave-btn');
 
   let resultText: string;
   let resultClass: string;
@@ -952,17 +970,56 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
     text.textContent = 'DRAW';
   }
 
-  finalScore.textContent = `MINT ${score.red}  —  ${score.blue} WHITE`;
+  finalScore.textContent = `MINT ${score.red}  \u2014  ${score.blue} WHITE`;
+
+  // Render goal scorers
+  if (scorersEl) {
+    if (matchGoals.length > 0) {
+      scorersEl.innerHTML = matchGoals.map(g => {
+        const icon = g.team === 'red' ? '\u{1F7E2}' : '\u26AA';
+        return `<div class="scorer-entry"><span class="scorer-icon">${icon}</span><span class="scorer-name">${g.scorerName}</span><span class="scorer-time">${g.minute}'</span></div>`;
+      }).join('');
+    } else {
+      scorersEl.innerHTML = '';
+    }
+  }
+
+  // Show actions
+  const isPersistent = currentRoom?.code?.startsWith('PUMP-');
+  if (actionsEl) actionsEl.style.display = '';
+  if (rematchBtn) {
+    // Rematch = stay in room for next game
+    rematchBtn.style.display = '';
+    rematchBtn.textContent = isPersistent ? '\u26A1 NEXT GAME' : '\u26A1 REMATCH';
+    rematchBtn.onclick = () => {
+      hideGameOver();
+      showScreen('room');
+    };
+  }
+  if (leaveBtn) {
+    leaveBtn.onclick = () => {
+      hideGameOver();
+      socket.emit('leaveRoom');
+      currentRoom = null;
+      isInGame = false;
+      document.dispatchEvent(new Event('gameStopped'));
+      showScreen('lobby');
+      startMatchesPolling();
+      toast('Left match', 'info');
+    };
+  }
+
   overlay.style.display = '';  // reset inline override from hideGameOver
   overlay.classList.add('show');
 
-  let secs = 4;
-  if (countdownEl) countdownEl.textContent = `Returning to lobby in ${secs}...`;
+  // Countdown — just visual, doesn't force transition
+  let secs = 5;
+  if (countdownEl) countdownEl.textContent = `Auto-return to room in ${secs}...`;
   if (gameOverCountdownInterval) clearInterval(gameOverCountdownInterval);
   gameOverCountdownInterval = setInterval(() => {
     secs--;
     if (countdownEl) {
-      countdownEl.textContent = secs > 0 ? `Returning to lobby in ${secs}...` : 'Returning to lobby...';
+      countdownEl.textContent = secs > 0 ? `Auto-return to room in ${secs}...` : '';
     }
     if (secs <= 0) { clearInterval(gameOverCountdownInterval!); gameOverCountdownInterval = null; }
   }, 1000);
@@ -1309,7 +1366,12 @@ function buildUI() {
         <div id="gameover-result" class="gameover-result victory">VICTORY</div>
         <div id="winner-text" class="winner-text red">MINT WINS</div>
         <div id="gameover-score" class="final-score">5 — 0</div>
-        <div id="gameover-countdown" class="gameover-sub">Returning to lobby in 4...</div>
+        <div id="gameover-scorers" class="gameover-scorers"></div>
+        <div id="gameover-actions" class="gameover-actions">
+          <button id="gameover-rematch-btn" class="btn btn-primary gameover-btn">⚡ REMATCH</button>
+          <button id="gameover-leave-btn" class="btn btn-danger gameover-btn">LEAVE</button>
+        </div>
+        <div id="gameover-countdown" class="gameover-sub">Returning to room in 5...</div>
       </div>
     </div>
 
