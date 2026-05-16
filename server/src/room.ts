@@ -17,6 +17,7 @@ type RoomPlayerData = {
   name: string;
   team: Team;
   avatarData?: string;
+  suspended?: boolean;
 };
 
 type RoomInfo = {
@@ -185,12 +186,65 @@ export class Room {
     this.broadcastRoomInfo();
   }
 
+  // Suspend a player on disconnect — keep their slot, zero their input
+  suspendPlayer(id: string): void {
+    const player = this.players.get(id);
+    if (!player) return;
+    player.suspended = true;
+    this.physics?.updateKeyboard(id, {
+      rightClicked: false,
+      leftClicked: false,
+      upClicked: false,
+      downClicked: false,
+      spaceClicked: false,
+    });
+  }
+
+  // Restore a reconnected player: remap old socket ID to new socket ID
+  restorePlayer(oldId: string, newId: string): RoomInfo | null {
+    const player = this.players.get(oldId);
+    if (!player) return null;
+    player.id = newId;
+    player.suspended = false;
+    this.players.delete(oldId);
+    this.players.set(newId, player);
+    if (this.hostId === oldId) this.hostId = newId;
+    this.physics?.restorePlayer(oldId, newId);
+    this.broadcastRoomInfo();
+    return this.getRoomInfo();
+  }
+
   changeTeam(id: string, team: Team): void {
     const player = this.players.get(id);
     if (!player) return;
 
-    // Can't join a playing team mid-game
-    if (this.status === 'playing' && team !== 'spectator') return;
+    // Mid-game: spectators CAN join a team if it has open slots
+    if (this.status === 'playing' && team !== 'spectator') {
+      if (player.team !== 'spectator') return; // already on a team, can't switch mid-game
+      const teamCount = Array.from(this.players.values()).filter(
+        (p) => p.team === team && p.id !== id,
+      ).length;
+      if (teamCount >= this.maxTeamSize) return;
+      player.team = team;
+      // Add to physics at a spawn position
+      if (this.physics) {
+        const idx = Array.from(this.players.values()).filter(p => p.team === team && p.id !== id).length;
+        this.physics.addPlayer(id, team as 'red' | 'blue', idx);
+      }
+      this.io.to(this.roomKey).emit('playerJoinedMidGame', { id, name: player.name, team });
+      this.broadcastRoomInfo();
+      return;
+    }
+
+    if (this.status === 'playing' && team === 'spectator') {
+      // Allow leaving team to spectator mid-game
+      if (player.team !== 'spectator') {
+        this.physics?.removePlayer(id);
+      }
+      player.team = team;
+      this.broadcastRoomInfo();
+      return;
+    }
 
     if (team !== 'spectator') {
       const teamCount = Array.from(this.players.values()).filter(
@@ -344,9 +398,14 @@ export class Room {
 
     this.score[team]++;
 
+    const scorerId = this.physics?.getLastTouchPlayerId() ?? null;
+    const scorer = scorerId ? this.players.get(scorerId) : null;
+
     this.io.to(this.roomKey).emit('goal', {
       team,
       score: { ...this.score },
+      scorerId: scorer?.id,
+      scorerName: scorer?.name,
     });
 
     if (this.score[team] >= SCORE_LIMIT) {

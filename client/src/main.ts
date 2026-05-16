@@ -67,6 +67,26 @@ function getSelectedAvatarDataURL(): string | null {
   return null;
 }
 
+function compressAvatar(dataUrl: string, maxSize = 128): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = maxSize;
+      canvas.height = maxSize;
+      const ctx = canvas.getContext('2d')!;
+      // Draw centered/cropped square
+      const size = Math.min(img.width, img.height);
+      const sx = (img.width - size) / 2;
+      const sy = (img.height - size) / 2;
+      ctx.drawImage(img, sx, sy, size, size, 0, 0, maxSize, maxSize);
+      resolve(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => resolve(dataUrl); // fallback to original
+    img.src = dataUrl;
+  });
+}
+
 function getPlayerAvatarData(): string | undefined {
   const auth = getAuthState();
   if (auth.user?.avatar_data) return auth.user.avatar_data;
@@ -102,6 +122,17 @@ let myId = '';
 let myName = '';
 let guestName = randomGuestName();
 
+function sanitizeName(name: string): string {
+  // Strip non-printable and control chars, trim, limit length
+  return name.replace(/[^\w\s\-_.!@#$%^&*()]/g, '').trim().slice(0, 20);
+}
+
+function validateName(name: string): string | null {
+  const clean = sanitizeName(name);
+  if (clean.length < 2) return null;
+  return clean;
+}
+
 function getPlayerName(): string {
   const auth = getAuthState();
   if (auth.user?.username) return auth.user.username;
@@ -113,6 +144,8 @@ let currentRoom: RoomInfo | null = null;
 let renderer: Renderer | null = null;
 let isInGame = false;
 let matchesInterval: ReturnType<typeof setInterval> | null = null;
+let currentPing = 0;
+let pingInterval: ReturnType<typeof setInterval> | null = null;
 
 // Interpolation state
 let prevState: GameState | null = null;
@@ -170,28 +203,80 @@ function playGoalSound() {
 
 function playKickSound() { playSound(200, 0.08, 'sawtooth', 0.1); }
 
+function playCountdownBeep(seconds: number) {
+  // Ascending pitch as countdown decreases
+  const freq = seconds <= 1 ? 880 : seconds <= 2 ? 660 : seconds <= 3 ? 550 : 440;
+  playSound(freq, 0.12, 'sine', 0.18);
+}
+
+function playGameStartSound() {
+  playSound(523, 0.1, 'square', 0.15);
+  setTimeout(() => playSound(659, 0.1, 'square', 0.15), 100);
+  setTimeout(() => playSound(784, 0.1, 'square', 0.15), 200);
+  setTimeout(() => playSound(1047, 0.25, 'square', 0.2), 300);
+}
+
+function playGameOverSound() {
+  playSound(784, 0.15, 'sawtooth', 0.15);
+  setTimeout(() => playSound(659, 0.15, 'sawtooth', 0.15), 150);
+  setTimeout(() => playSound(523, 0.15, 'sawtooth', 0.15), 300);
+  setTimeout(() => playSound(392, 0.4, 'sawtooth', 0.12), 450);
+}
+
 // ===== CHAT =====
-function addChatMessage(container: HTMLElement, msg: ChatMessage, team?: Team) {
+type ChatEntry = { type: 'msg'; msg: ChatMessage; team?: Team } | { type: 'system'; text: string };
+const chatHistory: ChatEntry[] = [];
+
+function renderChatEntry(entry: ChatEntry): HTMLDivElement {
   const div = document.createElement('div');
   div.className = 'chat-msg';
-  const nameSpan = document.createElement('span');
-  nameSpan.className = `msg-name ${team ?? 'spectator'}`;
-  nameSpan.textContent = msg.playerName + ':';
-  const textSpan = document.createElement('span');
-  textSpan.className = 'msg-text';
-  textSpan.textContent = ' ' + msg.text;
-  div.appendChild(nameSpan); div.appendChild(textSpan);
+  if (entry.type === 'msg') {
+    const nameSpan = document.createElement('span');
+    nameSpan.className = `msg-name ${entry.team ?? 'spectator'}`;
+    nameSpan.textContent = entry.msg.playerName + ':';
+    const textSpan = document.createElement('span');
+    textSpan.className = 'msg-text';
+    textSpan.textContent = ' ' + entry.msg.text;
+    div.appendChild(nameSpan); div.appendChild(textSpan);
+  } else {
+    const span = document.createElement('span');
+    span.className = 'msg-name system';
+    span.textContent = '⚡ ' + entry.text;
+    div.appendChild(span);
+  }
+  return div;
+}
+
+function addChatMessage(container: HTMLElement, msg: ChatMessage, team?: Team) {
+  const entry: ChatEntry = { type: 'msg', msg, team };
+  chatHistory.push(entry);
+  if (chatHistory.length > 200) chatHistory.shift();
+  const div = renderChatEntry(entry);
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
+  // Mirror to other chat container
+  const otherId = container.id === 'room-chat-messages' ? 'game-chat-messages' : 'room-chat-messages';
+  const other = document.getElementById(otherId);
+  if (other) { other.appendChild(renderChatEntry(entry)); other.scrollTop = other.scrollHeight; }
 }
 
 function addSystemMessage(container: HTMLElement, text: string) {
-  const div = document.createElement('div');
-  div.className = 'chat-msg';
-  const span = document.createElement('span');
-  span.className = 'msg-name system';
-  span.textContent = '⚡ ' + text;
-  div.appendChild(span); container.appendChild(div);
+  const entry: ChatEntry = { type: 'system', text };
+  chatHistory.push(entry);
+  if (chatHistory.length > 200) chatHistory.shift();
+  const div = renderChatEntry(entry);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  const otherId = container.id === 'room-chat-messages' ? 'game-chat-messages' : 'room-chat-messages';
+  const other = document.getElementById(otherId);
+  if (other) { other.appendChild(renderChatEntry(entry)); other.scrollTop = other.scrollHeight; }
+}
+
+function populateChatFromHistory(container: HTMLElement) {
+  container.innerHTML = '';
+  for (const entry of chatHistory) {
+    container.appendChild(renderChatEntry(entry));
+  }
   container.scrollTop = container.scrollHeight;
 }
 
@@ -508,20 +593,80 @@ function setupKeyboard() {
 
 // ===== SOCKET SETUP =====
 function setupSocket() {
-  socket = io(SERVER_URL, { transports: ['websocket', 'polling'] });
+  socket = io(SERVER_URL, {
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: 15,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+  });
 
   socket.on('connect', () => {
     myId = socket.id ?? '';
     if (renderer) renderer.setMyId(myId);
-    toast('Connected', 'success');
+
+    const overlay = document.getElementById('reconnect-overlay');
+    const storedToken = sessionStorage.getItem('pumpball_reconnect_token');
+
+    if (storedToken && currentRoom) {
+      // Attempt to restore session — overlay stays until 'reconnected' confirms it
+      socket.emit('reconnect_attempt', { token: storedToken });
+    } else {
+      if (overlay) overlay.style.display = 'none';
+      toast('Connected', 'success');
+    }
   });
 
   socket.on('disconnect', () => {
-    toast('Disconnected', 'error');
+    const overlay = document.getElementById('reconnect-overlay');
+    if (overlay) overlay.style.display = 'flex';
+    updatePingDisplay(-1);
+  });
+
+  socket.io.on('reconnect_failed', () => {
+    sessionStorage.removeItem('pumpball_reconnect_token');
+    const overlay = document.getElementById('reconnect-overlay');
+    if (overlay) {
+      overlay.innerHTML = `
+        <div style="text-align:center">
+          <div style="font-size:20px;font-weight:700;color:#ff4444;margin-bottom:12px">Connection Lost</div>
+          <div style="color:#888;margin-bottom:16px;font-size:13px">Unable to reconnect to server</div>
+          <button onclick="location.reload()" style="background:#00ff88;color:#000;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px">RELOAD</button>
+        </div>
+      `;
+    }
     isInGame = false;
     document.dispatchEvent(new Event('gameStopped'));
+    currentRoom = null;
     showScreen('lobby');
     startMatchesPolling();
+  });
+
+  socket.on('reconnectToken', (token: string) => {
+    sessionStorage.setItem('pumpball_reconnect_token', token);
+  });
+
+  socket.on('reconnected', (info: RoomInfo) => {
+    currentRoom = info;
+    myId = socket.id ?? '';
+    if (renderer) renderer.setMyId(myId);
+    const me = info.players.find(p => p.id === myId);
+    myTeam = me?.team ?? 'spectator';
+    const overlay = document.getElementById('reconnect-overlay');
+    if (overlay) overlay.style.display = 'none';
+    toast('Reconnected!', 'success');
+    if (info.status === 'playing') {
+      isInGame = true;
+      document.dispatchEvent(new Event('gameStarted'));
+      if (renderer) { renderer.setFieldConfig(info.mode); renderer.resize(); }
+      showScreen('game');
+      const codeEl = document.getElementById('topbar-room-code');
+      if (codeEl) codeEl.textContent = info.code;
+    } else {
+      isInGame = false;
+      showScreen('room');
+      renderRoomInfo(info);
+    }
   });
 
   socket.on('roomJoined', (info: RoomInfo) => {
@@ -542,6 +687,7 @@ function setupSocket() {
       if (renderer) renderer.resize();
       const codeEl = document.getElementById('topbar-room-code');
       if (codeEl) codeEl.textContent = info.code;
+      chatHistory.length = 0;
       const gameChat = $<HTMLElement>('#game-chat-messages');
       gameChat.innerHTML = '';
       addSystemMessage(gameChat, `Joined room ${info.code} as spectator`);
@@ -549,6 +695,7 @@ function setupSocket() {
     } else {
       showScreen('room');
       renderRoomInfo(info);
+      chatHistory.length = 0; // Clear history on new room join
       const roomChat = $<HTMLElement>('#room-chat-messages');
       roomChat.innerHTML = '';
       addSystemMessage(roomChat, `Joined room ${info.code} (${info.mode || '4v4'})`);
@@ -595,6 +742,7 @@ function setupSocket() {
     isInGame = true;
     prevState = null;
     targetState = null;
+    playGameStartSound();
     document.dispatchEvent(new Event('gameStarted'));
     showScreen('game');
 
@@ -613,7 +761,7 @@ function setupSocket() {
     if (startBtn) startBtn.style.display = 'none';
 
     const gameChat = $<HTMLElement>('#game-chat-messages');
-    gameChat.innerHTML = '';
+    populateChatFromHistory(gameChat);
     addSystemMessage(gameChat, 'Game started! Good luck!');
   });
 
@@ -650,9 +798,9 @@ function setupSocket() {
     }
   });
 
-  socket.on('goal', (data: { team: Team; score: { red: number; blue: number } }) => {
+  socket.on('goal', (data: { team: Team; score: { red: number; blue: number }; scorerId?: string; scorerName?: string }) => {
     playGoalSound();
-    showGoalOverlay(data.team, data.score);
+    showGoalOverlay(data.team, data.score, data.scorerName);
     const sr = document.getElementById('topbar-score-red');
     const sb = document.getElementById('topbar-score-blue');
     if (sr) sr.textContent = String(data.score.red);
@@ -660,7 +808,8 @@ function setupSocket() {
 
     const gameChat = $<HTMLElement>('#game-chat-messages');
     const teamName = data.team === 'red' ? '🟢 MINT' : '⚪ WHITE';
-    addSystemMessage(gameChat, `GOAL! ${teamName} scores! ${data.score.red} - ${data.score.blue}`);
+    const scorerText = data.scorerName ? ` (${data.scorerName})` : '';
+    addSystemMessage(gameChat, `GOAL! ${teamName}${scorerText} scores! ${data.score.red} - ${data.score.blue}`);
   });
 
   socket.on('overtime', () => {
@@ -675,10 +824,17 @@ function setupSocket() {
     toast(`${data.name} left the match`, 'info');
   });
 
+  socket.on('playerJoinedMidGame', (data: { id: string; name: string; team: string }) => {
+    const gameChat = $<HTMLElement>('#game-chat-messages');
+    const teamName = data.team === 'red' ? 'MINT' : 'WHITE';
+    addSystemMessage(gameChat, `${data.name} joined ${teamName}!`);
+    toast(`${data.name} joined ${teamName}`, 'info');
+  });
+
   socket.on('gameOver', (data: { winner: Team | null; score: { red: number; blue: number }; forfeit?: boolean }) => {
     isInGame = false;
     document.dispatchEvent(new Event('gameStopped'));
-
+    playGameOverSound();
     showGameOver(data.winner, data.score, data.forfeit);
 
     const gameChat = $<HTMLElement>('#game-chat-messages');
@@ -714,6 +870,7 @@ function setupSocket() {
     if (countdownDisplay) countdownDisplay.style.display = '';
     if (waitingMsg) waitingMsg.style.display = 'none';
     if (countdownNumber) countdownNumber.textContent = String(data.seconds);
+    playCountdownBeep(data.seconds);
     if (data.seconds === 5) toast('Game starting in 5...', 'info');
   });
 
@@ -726,25 +883,35 @@ function setupSocket() {
   });
 
   socket.on('chatMessage', (msg: ChatMessage) => {
-    const roomChat = document.getElementById('room-chat-messages');
-    const gameChat = document.getElementById('game-chat-messages');
     const senderTeam = currentRoom?.players.find(p => p.name === msg.playerName)?.team;
-
-    if (!isInGame && roomChat) addChatMessage(roomChat, msg, senderTeam);
-    if (gameChat) addChatMessage(gameChat, msg, senderTeam);
+    // Use the currently visible chat container — unified chat mirrors to both
+    const activeContainer = isInGame
+      ? document.getElementById('game-chat-messages')
+      : document.getElementById('room-chat-messages');
+    if (activeContainer) addChatMessage(activeContainer, msg, senderTeam);
   });
 
   socket.on('error', (message: string) => { toast(message, 'error'); });
+
+  // Ping measurement
+  if (pingInterval) clearInterval(pingInterval);
+  pingInterval = setInterval(() => {
+    const start = Date.now();
+    socket.emit('ping', () => {
+      currentPing = Date.now() - start;
+      updatePingDisplay();
+    });
+  }, 3000);
 }
 
 // ===== OVERLAYS =====
-function showGoalOverlay(team: Team, score: { red: number; blue: number }) {
+function showGoalOverlay(team: Team, score: { red: number; blue: number }, scorerName?: string) {
   const overlay = $<HTMLElement>('#goal-overlay');
   const text = $<HTMLElement>('#goal-text');
   const sub = $<HTMLElement>('#goal-sub');
   text.className = `goal-text ${team}`;
   text.textContent = 'GOAL!';
-  sub.textContent = `${score.red} — ${score.blue}`;
+  sub.textContent = scorerName ? `${score.red} — ${score.blue} · ${scorerName}` : `${score.red} — ${score.blue}`;
   overlay.classList.add('show');
   setTimeout(() => overlay.classList.remove('show'), 1500);
 }
@@ -807,6 +974,56 @@ function hideGameOver() {
   const overlay = $<HTMLElement>('#gameover-overlay');
   overlay.classList.remove('show');
   overlay.style.display = 'none';
+}
+
+function updatePingDisplay(ping?: number) {
+  const el = document.getElementById('ping-display');
+  if (!el) return;
+  if (ping === -1) {
+    el.textContent = 'Offline';
+    el.style.color = '#ff4444';
+    return;
+  }
+  const p = ping !== undefined ? ping : currentPing;
+  el.textContent = p + 'ms';
+  el.style.color = p < 80 ? '#00ff88' : p < 150 ? '#ffcc00' : '#ff4444';
+}
+
+// ===== LEADERBOARD =====
+function showLeaderboard() {
+  const section = document.getElementById('leaderboard-section');
+  if (!section) return;
+  section.classList.add('active');
+  section.innerHTML = '<div style="text-align:center;padding:24px;color:#888">Loading...</div>';
+  fetch(`${SERVER_URL}/api/leaderboard`).then(r => r.json()).then(data => {
+    const players = data.players || [];
+    if (players.length === 0) {
+      section.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#888"><div style="font-size:32px;margin-bottom:12px">🏆</div><div style="font-size:14px">No players yet. Be the first!</div></div>';
+      return;
+    }
+    let html = '<div class="section-heading"><h2>🏆 Leaderboard</h2><span class="heading-sub">Top players by wins</span></div>';
+    html += '<div class="leaderboard-list">';
+    players.forEach((p: any, i: number) => {
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`;
+      const name = p.username || p.wallet_address?.slice(0, 8) + '...' || 'Anonymous';
+      html += `<div class="leaderboard-row${i < 3 ? ' top-three' : ''}">
+        <span class="lb-rank">${medal}</span>
+        <span class="lb-name">${name}</span>
+        <span class="lb-stat">${p.games_won ?? 0}W</span>
+        <span class="lb-stat">${p.goals_scored ?? 0}G</span>
+        <span class="lb-stat">${p.games_played ?? 0}P</span>
+      </div>`;
+    });
+    html += '</div>';
+    section.innerHTML = html;
+  }).catch(() => {
+    section.innerHTML = '<div style="text-align:center;padding:40px;color:#ff4444">Failed to load leaderboard</div>';
+  });
+}
+
+function hideLeaderboard() {
+  const section = document.getElementById('leaderboard-section');
+  if (section) section.classList.remove('active');
 }
 
 // ===== SIDEBAR HTML (shared) =====
@@ -894,6 +1111,9 @@ function buildUI() {
         </section>
 
         <div id="lobby-error" class="error-msg"></div>
+
+          <!-- Leaderboard Section (hidden by default) -->
+          <div id="leaderboard-section" class="leaderboard-screen"></div>
 
           <!-- Profile Section (hidden by default, shown via nav) -->
           <div id="profile-section" class="profile-screen">
@@ -1011,6 +1231,7 @@ function buildUI() {
           <div class="topbar-info">FIRST TO 5 WINS</div>
         </div>
         <div class="topbar-right">
+          <span id="ping-display" style="font-size:11px;font-family:monospace;color:#00ff88;margin-right:6px"></span>
           <span class="topbar-room" id="topbar-room-code" title="Click to copy">------</span>
           <button class="btn-leave" id="game-leave-btn">LEAVE</button>
         </div>
@@ -1128,6 +1349,11 @@ function buildUI() {
     </div>
 
     <div id="toast-container" class="toast-container"></div>
+
+    <div id="reconnect-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:16px">
+      <div class="reconnect-spinner"></div>
+      <div style="color:#00ff88;font-size:16px;font-weight:700;letter-spacing:3px">RECONNECTING...</div>
+    </div>
   `;
 }
 
@@ -1224,9 +1450,10 @@ function setupEventListeners() {
       if (file.size > 2 * 1024 * 1024) { toast('Max 2MB', 'error'); return; }
       welcomePendingFile = file;
       const reader = new FileReader();
-      reader.onload = () => {
-        welcomePendingDataUrl = reader.result as string;
-        if (welcomeAvatar) welcomeAvatar.innerHTML = '<img src="' + welcomePendingDataUrl + '" />';
+      reader.onload = async () => {
+        const compressed = await compressAvatar(reader.result as string);
+        welcomePendingDataUrl = compressed;
+        if (welcomeAvatar) welcomeAvatar.innerHTML = '<img src="' + compressed + '" />';
       };
       reader.readAsDataURL(file);
     });
@@ -1469,6 +1696,7 @@ function setupEventListeners() {
         if (nameRow) nameRow.style.display = '';
         if (avatarPickerSection) avatarPickerSection.style.display = '';
         if (profileSection) profileSection.classList.remove('active');
+        hideLeaderboard();
       } else if (nav === 'profile') {
         if (matchesSection) matchesSection.style.display = 'none';
         if (customSection) customSection.style.display = 'none';
@@ -1476,7 +1704,12 @@ function setupEventListeners() {
         if (avatarPickerSection) avatarPickerSection.style.display = 'none';
         if (profileSection) profileSection.classList.add('active');
       } else if (nav === 'leaderboard') {
-        toast('Leaderboard — coming soon', 'info');
+        if (matchesSection) matchesSection.style.display = 'none';
+        if (customSection) customSection.style.display = 'none';
+        if (nameRow) nameRow.style.display = 'none';
+        if (avatarPickerSection) avatarPickerSection.style.display = 'none';
+        if (profileSection) profileSection.classList.remove('active');
+        showLeaderboard();
       } else {
         toast(((nav || '').charAt(0).toUpperCase() + (nav || '').slice(1)) + ' — coming soon', 'info');
       }
@@ -1676,4 +1909,19 @@ function init() {
   });
 }
 
-init();
+function isMobileOrTablet(): boolean {
+  return /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet/i.test(navigator.userAgent) || window.innerWidth < 1024;
+}
+
+if (isMobileOrTablet()) {
+  document.getElementById('app')!.innerHTML = `
+    <div style="min-height:100vh;background:#0a0a0a;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;text-align:center;font-family:sans-serif">
+      <img src="/logo-full.png" alt="PumpBall" style="width:120px;margin-bottom:24px;opacity:0.9" />
+      <div style="color:#00ff88;font-size:24px;font-weight:900;letter-spacing:3px;margin-bottom:12px">PUMPBALL</div>
+      <div style="color:#fff;font-size:16px;font-weight:600;margin-bottom:8px">Desktop Only</div>
+      <div style="color:#888;font-size:13px;max-width:280px;line-height:1.6">This game requires a keyboard and mouse.<br>Please open on a desktop browser.</div>
+    </div>
+  `;
+} else {
+  init();
+}

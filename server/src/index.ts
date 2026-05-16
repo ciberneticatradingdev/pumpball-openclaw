@@ -24,6 +24,11 @@ const io = new Server(httpServer, {
 const rooms = new Map<string, Room>();
 const playerRooms = new Map<string, string>(); // socketId -> roomCode
 
+// Reconnection state
+const reconnectData = new Map<string, { socketId: string; roomCode: string; playerName: string; avatarData?: string }>();
+const pendingDisconnects = new Map<string, ReturnType<typeof setTimeout>>();
+const socketToToken = new Map<string, string>();
+
 type Team = 'red' | 'blue' | 'spectator';
 type Keyboard = {
   rightClicked: boolean;
@@ -71,6 +76,11 @@ function generateRoomCode(): string {
 
 io.on('connection', (socket) => {
   console.log(`[+] Player connected: ${socket.id}`);
+
+  // Issue a reconnect token for this connection
+  const token = crypto.randomUUID();
+  socketToToken.set(socket.id, token);
+  socket.emit('reconnectToken', token);
 
   socket.on('createRoom', (data: string | { name: string; avatarData?: string }, callback: (roomCode: string) => void) => {
     const code = generateRoomCode();
@@ -136,7 +146,7 @@ io.on('connection', (socket) => {
   );
 
   socket.on('leaveRoom', () => {
-    handleLeave(socket.id);
+    handleLeave(socket.id, true); // immediate — intentional leave
   });
 
   socket.on('changeTeam', (team: Team) => {
@@ -183,7 +193,6 @@ io.on('connection', (socket) => {
     });
   });
 
-
   socket.on('getMatches', (callback: (matches: any[]) => void) => {
     if (typeof callback !== 'function') return;
     const matches = PERSISTENT_CODES.map((code) => {
@@ -199,29 +208,120 @@ io.on('connection', (socket) => {
     });
     callback(matches);
   });
+
   socket.on('ping', (callback: () => void) => {
     if (typeof callback === 'function') callback();
   });
 
-  socket.on('disconnect', () => {
-    console.log(`[-] Player disconnected: ${socket.id}`);
-    handleLeave(socket.id);
+  // Reconnection: client sends back its stored token after a new connection
+  socket.on('reconnect_attempt', (data: { token: string }) => {
+    if (!data || typeof data.token !== 'string') return;
+    const rd = reconnectData.get(data.token);
+    if (!rd) return;
+
+    const room = rooms.get(rd.roomCode);
+    if (!room || !room.hasPlayer(rd.socketId)) return;
+
+    // Cancel the pending removal timeout
+    const timeout = pendingDisconnects.get(rd.socketId);
+    if (timeout) {
+      clearTimeout(timeout);
+      pendingDisconnects.delete(rd.socketId);
+    }
+
+    const oldSocketId = rd.socketId;
+    const newSocketId = socket.id;
+
+    // Restore player data in room and physics
+    const roomInfo = room.restorePlayer(oldSocketId, newSocketId);
+    if (!roomInfo) return;
+
+    // Clean up old token data and set up new token data
+    reconnectData.delete(data.token);
+    const newToken = socketToToken.get(newSocketId);
+    if (newToken) {
+      reconnectData.set(newToken, {
+        socketId: newSocketId,
+        roomCode: rd.roomCode,
+        playerName: rd.playerName,
+        avatarData: rd.avatarData,
+      });
+    }
+
+    // Update player room mapping
+    playerRooms.delete(oldSocketId);
+    playerRooms.set(newSocketId, rd.roomCode);
+
+    // Re-join the socket room
+    socket.join(room.roomKey);
+
+    socket.emit('reconnected', roomInfo);
+    console.log(`[R] ${rd.playerName} reconnected: ${oldSocketId} -> ${newSocketId}`);
   });
 
-  function handleLeave(socketId: string) {
+  socket.on('disconnect', () => {
+    console.log(`[-] Player disconnected: ${socket.id}`);
+    handleLeave(socket.id, false); // grace period — may reconnect
+  });
+
+  function handleLeave(socketId: string, immediate: boolean = true) {
     const code = playerRooms.get(socketId);
-    if (!code) return;
+    if (!code) {
+      socketToToken.delete(socketId);
+      return;
+    }
 
     const room = rooms.get(code);
-    if (room) {
-      room.removePlayer(socketId);
-      if (room.isEmpty() && !room.persistent) {
-        rooms.delete(code);
-        console.log(`[-] Room ${code} deleted (empty)`);
+    const existingToken = socketToToken.get(socketId);
+
+    if (!immediate && room && existingToken) {
+      // Grace period: suspend player, schedule removal in 15s
+      const playerInfo = room.getRoomInfo().players.find(p => p.id === socketId);
+      room.suspendPlayer(socketId);
+
+      reconnectData.set(existingToken, {
+        socketId,
+        roomCode: code,
+        playerName: playerInfo?.name || '',
+        avatarData: playerInfo?.avatarData,
+      });
+
+      const timeout = setTimeout(() => {
+        const r = rooms.get(code);
+        if (r && r.hasPlayer(socketId)) {
+          r.removePlayer(socketId);
+          if (r.isEmpty() && !r.persistent) {
+            rooms.delete(code);
+            console.log(`[-] Room ${code} deleted (empty)`);
+          }
+        }
+        playerRooms.delete(socketId);
+        reconnectData.delete(existingToken);
+        pendingDisconnects.delete(socketId);
+        socketToToken.delete(socketId);
+      }, 15000);
+
+      pendingDisconnects.set(socketId, timeout);
+    } else {
+      // Immediate removal
+      if (room) {
+        room.removePlayer(socketId);
+        if (room.isEmpty() && !room.persistent) {
+          rooms.delete(code);
+          console.log(`[-] Room ${code} deleted (empty)`);
+        }
+      }
+      playerRooms.delete(socketId);
+
+      // Cancel any pending grace-period timeout for this socket
+      if (existingToken) {
+        const pt = pendingDisconnects.get(socketId);
+        if (pt) { clearTimeout(pt); pendingDisconnects.delete(socketId); }
+        reconnectData.delete(existingToken);
+        socketToToken.delete(socketId);
       }
     }
 
-    playerRooms.delete(socketId);
     socket.leave(`room:${code}`);
   }
 });

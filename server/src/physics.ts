@@ -144,6 +144,7 @@ export class ServerPhysics {
   private config: FieldConfig;
   private goalPosts: Disc[];
   private teamPositions: { red: Array<{ x: number; y: number }>; blue: Array<{ x: number; y: number }> };
+  private lastTouchPlayerId: string | null = null;
 
   constructor(config: FieldConfig, onGoal: (team: 'red' | 'blue') => void) {
     this.config = config;
@@ -197,6 +198,15 @@ export class ServerPhysics {
     if (player) player.keyboard = keyboard;
   }
 
+  // Rename a player's ID in physics state (used for reconnection)
+  restorePlayer(oldId: string, newId: string): void {
+    const player = this.players.get(oldId);
+    if (!player) return;
+    player.id = newId;
+    this.players.delete(oldId);
+    this.players.set(newId, player);
+  }
+
   update(_delta: number): void {
     // 1. Player movement
     for (const player of this.players.values()) {
@@ -218,11 +228,16 @@ export class ServerPhysics {
       d.yspeed *= damping;
     }
 
-    // 4. Disc-disc collisions (players + ball)
-    const allMovable = [this.ball, ...Array.from(this.players.values()).map(p => p.disc)];
-    for (let i = 0; i < allMovable.length; i++) {
-      for (let j = i + 1; j < allMovable.length; j++) {
-        this.resolveDiscCollision(allMovable[i], allMovable[j]);
+    // 4. Disc-disc collisions — ball vs players (tracked for scorer), then player vs player
+    for (const player of this.players.values()) {
+      if (this.resolveDiscCollision(player.disc, this.ball)) {
+        this.lastTouchPlayerId = player.id;
+      }
+    }
+    const playerArray = Array.from(this.players.values());
+    for (let i = 0; i < playerArray.length; i++) {
+      for (let j = i + 1; j < playerArray.length; j++) {
+        this.resolveDiscCollision(playerArray[i].disc, playerArray[j].disc);
       }
     }
 
@@ -274,6 +289,7 @@ export class ServerPhysics {
         this.ball.xspeed += n[0] * KICK_STRENGTH;
         this.ball.yspeed += n[1] * KICK_STRENGTH;
         player.kickFired = true;
+        this.lastTouchPlayerId = player.id;
       }
     }
   }
@@ -288,17 +304,17 @@ export class ServerPhysics {
     disc.yspeed *= disc.damping;
   }
 
-  private resolveDiscCollision(a: Disc, b: Disc): void {
+  private resolveDiscCollision(a: Disc, b: Disc): boolean {
     const dx = a.x - b.x;
     const dy = a.y - b.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
     const radiusSum = a.radius + b.radius;
 
-    if (dist <= 0 || dist > radiusSum) return;
+    if (dist <= 0 || dist > radiusSum) return false;
 
     const normal = [dx / dist, dy / dist];
     const totalInvMass = a.invMass + b.invMass;
-    if (totalInvMass === 0) return;
+    if (totalInvMass === 0) return false;
 
     const massFactorA = a.invMass / totalInvMass;
     const massFactorB = b.invMass / totalInvMass;
@@ -322,6 +338,8 @@ export class ServerPhysics {
       b.xspeed += normal[0] * speedFactor * massFactorB;
       b.yspeed += normal[1] * speedFactor * massFactorB;
     }
+
+    return true;
   }
 
   private handleWalls(): void {
@@ -412,6 +430,10 @@ export class ServerPhysics {
       player.keyboard = { ...initialKeyboard };
       player.kickFired = false;
     }
+  }
+
+  getLastTouchPlayerId(): string | null {
+    return this.lastTouchPlayerId;
   }
 
   getSnapshot(): PhysicsSnapshot {
