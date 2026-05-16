@@ -164,6 +164,20 @@ io.on('connection', (socket) => {
     room?.updateInput(socket.id, keyboard);
   });
 
+  socket.on('acceptRematch', () => {
+    const code = playerRooms.get(socket.id);
+    if (!code) return;
+    const room = rooms.get(code);
+    room?.acceptRematch(socket.id);
+  });
+
+  socket.on('declineRematch', () => {
+    const code = playerRooms.get(socket.id);
+    if (!code) return;
+    const room = rooms.get(code);
+    room?.declineRematch(socket.id);
+  });
+
   socket.on('startGame', () => {
     const code = playerRooms.get(socket.id);
     if (!code) return;

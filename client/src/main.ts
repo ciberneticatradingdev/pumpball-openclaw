@@ -890,23 +890,35 @@ function setupSocket() {
   });
 
   socket.on('gameReset', () => {
+    // Game ended, now in rematch phase — keep game over overlay visible
+    // Don't transition yet — wait for rematch accept/expire
     isInGame = false;
-    isGameOver = false;
     prevState = null;
     targetState = null;
-    matchGoals = [];
     document.dispatchEvent(new Event('gameStopped'));
-    hideGameOver();
-    // Stay in room for rematch — go to room screen, not lobby
-    if (currentRoom) {
-      showScreen('room');
-      renderRoomInfo(currentRoom); // refresh room UI with current state
-      toast('Match ended — waiting for next game', 'info');
-    } else {
-      showScreen('lobby');
-      startMatchesPolling();
-      toast('Match ended', 'info');
+    // isGameOver stays true — overlay stays visible until rematch or expire
+  });
+
+  socket.on('rematchStatus', (data: { accepted: string[]; needed: number }) => {
+    const statusEl = document.getElementById('gameover-rematch-status');
+    if (statusEl) {
+      statusEl.style.display = '';
+      statusEl.textContent = `${data.accepted.length}/${data.needed} players ready`;
     }
+  });
+
+  socket.on('rematchExpired', () => {
+    // Rematch timed out or declined — everyone goes to lobby
+    isGameOver = false;
+    matchGoals = [];
+    hideGameOver();
+    socket.emit('leaveRoom');
+    currentRoom = null;
+    isInGame = false;
+    document.dispatchEvent(new Event('gameStopped'));
+    showScreen('lobby');
+    startMatchesPolling();
+    toast('Rematch expired — returning to lobby', 'info');
   });
 
   socket.on('countdown', (data: { seconds: number }) => {
@@ -918,6 +930,13 @@ function setupSocket() {
     if (countdownNumber) countdownNumber.textContent = String(data.seconds);
     playCountdownBeep(data.seconds);
     if (data.seconds === 5) toast('Game starting in 5...', 'info');
+    // Also update game over overlay if visible
+    if (isGameOver) {
+      const statusEl = document.getElementById('gameover-rematch-status');
+      const cdEl = document.getElementById('gameover-countdown');
+      if (statusEl) { statusEl.style.display = ''; statusEl.textContent = `Starting in ${data.seconds}...`; }
+      if (cdEl) cdEl.textContent = '';
+    }
   });
 
   socket.on('countdownCancelled', () => {
@@ -1020,18 +1039,22 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
   const isPersistent = currentRoom?.code?.startsWith('PUMP-');
   if (actionsEl) actionsEl.style.display = '';
   if (rematchBtn) {
-    // Rematch = stay in room for next game
     rematchBtn.style.display = '';
-    rematchBtn.textContent = isPersistent ? '\u26A1 NEXT GAME' : '\u26A1 REMATCH';
+    rematchBtn.textContent = '\u26A1 REMATCH';
     rematchBtn.onclick = () => {
-      isGameOver = false;
-      hideGameOver();
-      showScreen('room');
-      if (currentRoom) renderRoomInfo(currentRoom);
+      socket.emit('acceptRematch');
+      rematchBtn.setAttribute('disabled', 'true');
+      rematchBtn.textContent = '\u2705 READY';
+      const statusEl = document.getElementById('gameover-rematch-status');
+      if (statusEl) {
+        statusEl.style.display = '';
+        statusEl.textContent = 'Waiting for opponent...';
+      }
     };
   }
   if (leaveBtn) {
     leaveBtn.onclick = () => {
+      socket.emit('declineRematch');
       isGameOver = false;
       hideGameOver();
       socket.emit('leaveRoom');
@@ -1047,14 +1070,14 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
   overlay.style.display = '';  // reset inline override from hideGameOver
   overlay.classList.add('show');
 
-  // Countdown — just visual, doesn't force transition
-  let secs = 5;
-  if (countdownEl) countdownEl.textContent = `Auto-return to room in ${secs}...`;
+  // Countdown for rematch decision (20s server timeout)
+  let secs = 20;
+  if (countdownEl) countdownEl.textContent = `Choose in ${secs}s...`;
   if (gameOverCountdownInterval) clearInterval(gameOverCountdownInterval);
   gameOverCountdownInterval = setInterval(() => {
     secs--;
     if (countdownEl) {
-      countdownEl.textContent = secs > 0 ? `Auto-return to room in ${secs}...` : '';
+      countdownEl.textContent = secs > 0 ? `Choose in ${secs}s...` : '';
     }
     if (secs <= 0) { clearInterval(gameOverCountdownInterval!); gameOverCountdownInterval = null; }
   }, 1000);
@@ -1407,7 +1430,8 @@ function buildUI() {
           <button id="gameover-rematch-btn" class="btn btn-primary gameover-btn">⚡ REMATCH</button>
           <button id="gameover-leave-btn" class="btn btn-danger gameover-btn">LEAVE</button>
         </div>
-        <div id="gameover-countdown" class="gameover-sub">Returning to room in 5...</div>
+        <div id="gameover-rematch-status" class="gameover-sub" style="display:none"></div>
+        <div id="gameover-countdown" class="gameover-sub"></div>
       </div>
     </div>
 

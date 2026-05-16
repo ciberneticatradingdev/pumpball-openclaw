@@ -84,6 +84,9 @@ export class Room {
   private overtime = false;
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
   private countdownSeconds = 0;
+  private rematchReady: Set<string> = new Set();
+  private rematchTimeout: ReturnType<typeof setTimeout> | null = null;
+  private awaitingRematch = false;
 
   constructor(
     code: string,
@@ -127,7 +130,13 @@ export class Room {
     const player = this.players.get(id);
     const wasOnTeam = player?.team !== 'spectator';
     const playerName = player?.name ?? '';
+    this.rematchReady.delete(id);
     this.players.delete(id);
+
+    // If awaiting rematch and a team player left, cancel rematch for everyone
+    if (this.awaitingRematch && wasOnTeam) {
+      this.cancelRematch();
+    }
 
     if (id === this.hostId) {
       const next = this.players.keys().next().value as string | undefined;
@@ -387,9 +396,20 @@ export class Room {
     this.goalCooldown = false;
     this.timeLeft = MATCH_DURATION;
     this.overtime = false;
+
+    // Start rematch phase — wait for explicit acceptance
+    this.rematchReady.clear();
+    this.awaitingRematch = true;
     this.io.to(this.roomKey).emit('gameReset');
     this.broadcastRoomInfo();
-    this.checkAutoStart();
+
+    // Timeout: if not everyone accepts in 20s, kick all to lobby
+    if (this.rematchTimeout) clearTimeout(this.rematchTimeout);
+    this.rematchTimeout = setTimeout(() => {
+      if (this.awaitingRematch) {
+        this.cancelRematch();
+      }
+    }, 20000);
   }
 
   private handleGoal(team: 'red' | 'blue'): void {
@@ -423,6 +443,57 @@ export class Room {
       this.physics?.resetPositions();
       this.goalCooldown = false;
     }, 1500);
+  }
+
+  // Player accepts rematch
+  acceptRematch(id: string): void {
+    if (!this.awaitingRematch) return;
+    const player = this.players.get(id);
+    if (!player || player.team === 'spectator') return;
+
+    this.rematchReady.add(id);
+    this.io.to(this.roomKey).emit('rematchStatus', {
+      accepted: Array.from(this.rematchReady),
+      needed: this.getActivePlayers().length,
+    });
+
+    // Check if all active (non-spectator) players accepted
+    const activePlayers = this.getActivePlayers();
+    const allReady = activePlayers.every(p => this.rematchReady.has(p.id));
+    if (allReady && activePlayers.length >= 2) {
+      this.awaitingRematch = false;
+      if (this.rematchTimeout) { clearTimeout(this.rematchTimeout); this.rematchTimeout = null; }
+      this.rematchReady.clear();
+      this.checkAutoStart();
+    }
+  }
+
+  // Cancel rematch — dissolve the room for non-persistent, reset teams for persistent
+  cancelRematch(): void {
+    this.awaitingRematch = false;
+    if (this.rematchTimeout) { clearTimeout(this.rematchTimeout); this.rematchTimeout = null; }
+    this.rematchReady.clear();
+    this.io.to(this.roomKey).emit('rematchExpired');
+
+    // Move all players to spectator so they don't auto-start
+    for (const player of this.players.values()) {
+      player.team = 'spectator';
+    }
+    this.broadcastRoomInfo();
+  }
+
+  // Player declines rematch — triggers cancel for everyone
+  declineRematch(id: string): void {
+    if (!this.awaitingRematch) return;
+    this.cancelRematch();
+  }
+
+  isAwaitingRematch(): boolean {
+    return this.awaitingRematch;
+  }
+
+  private getActivePlayers(): RoomPlayerData[] {
+    return Array.from(this.players.values()).filter(p => p.team !== 'spectator');
   }
 
   private autoAssignTeam(id: string): void {
