@@ -17,20 +17,20 @@ function randomGuestName(): string {
 }
 
 // ===== DEFAULT AVATARS =====
-const DEFAULT_AVATARS = [
-  { emoji: '🐸', bg: '#2a6b2a', label: 'Pepe' },
-  { emoji: '😈', bg: '#6b2da8', label: 'Trollface' },
-  { emoji: '😎', bg: '#9b7a00', label: 'Chad' },
-  { emoji: '🦍', bg: '#6b3d2a', label: 'Ape' },
-  { emoji: '🐋', bg: '#1a5fa8', label: 'Whale' },
-  { emoji: '🚀', bg: '#c85a00', label: 'Rocket' },
-  { emoji: '💀', bg: '#222222', label: 'Skull' },
-  { emoji: '🤡', bg: '#c4207a', label: 'Clown' },
-  { emoji: '👽', bg: '#1a8a1a', label: 'Alien' },
-  { emoji: '🔥', bg: '#c82000', label: 'Fire' },
-  { emoji: '⭐', bg: '#a89000', label: 'Star' },
-  { emoji: '🎮', bg: '#0a7a7a', label: 'Gamer' },
-] as const;
+// Two types: 'emoji' (generated via canvas) and 'image' (static file in /avatars/)
+type AvatarDef = { type: 'emoji'; emoji: string; bg: string; label: string } | { type: 'image'; src: string; label: string };
+const DEFAULT_AVATARS: AvatarDef[] = [
+  { type: 'image', src: '/avatars/cupsey.jpg', label: 'Cupsey' },
+  { type: 'image', src: '/avatars/a1lon.jpg', label: 'A1lon' },
+  { type: 'emoji', emoji: '🐸', bg: '#2a6b2a', label: 'Pepe' },
+  { type: 'emoji', emoji: '😈', bg: '#6b2da8', label: 'Devil' },
+  { type: 'emoji', emoji: '😎', bg: '#9b7a00', label: 'Chad' },
+  { type: 'emoji', emoji: '🦍', bg: '#6b3d2a', label: 'Ape' },
+  { type: 'emoji', emoji: '🐋', bg: '#1a5fa8', label: 'Whale' },
+  { type: 'emoji', emoji: '💀', bg: '#222222', label: 'Skull' },
+  { type: 'emoji', emoji: '🚀', bg: '#c85a00', label: 'Rocket' },
+  { type: 'emoji', emoji: '🔥', bg: '#c82000', label: 'Fire' },
+];
 
 let defaultAvatarDataURLs: string[] = [];
 let selectedAvatarIndex = -1;
@@ -52,17 +52,41 @@ function generateAvatarDataURL(emoji: string, bg: string): string {
 }
 
 function generateDefaultAvatars(): void {
-  defaultAvatarDataURLs = DEFAULT_AVATARS.map(a => generateAvatarDataURL(a.emoji, a.bg));
+  // Generate emoji avatars, load image avatars
+  defaultAvatarDataURLs = DEFAULT_AVATARS.map(a => {
+    if (a.type === 'emoji') return generateAvatarDataURL(a.emoji, a.bg);
+    return ''; // placeholder for image avatars — loaded async
+  });
+  // Load image avatars async
+  DEFAULT_AVATARS.forEach((a, i) => {
+    if (a.type === 'image') {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128; canvas.height = 128;
+        const ctx = canvas.getContext('2d')!;
+        const size = Math.min(img.width, img.height);
+        const sx = (img.width - size) / 2;
+        const sy = (img.height - size) / 2;
+        ctx.beginPath(); ctx.arc(64, 64, 64, 0, Math.PI * 2); ctx.clip();
+        ctx.drawImage(img, sx, sy, size, size, 0, 0, 128, 128);
+        defaultAvatarDataURLs[i] = canvas.toDataURL('image/jpeg', 0.85);
+      };
+      img.src = a.src;
+    }
+  });
   const stored = localStorage.getItem('pumpball_avatar_idx');
   if (stored !== null) {
     const idx = parseInt(stored, 10);
-    if (idx >= 0 && idx < defaultAvatarDataURLs.length) selectedAvatarIndex = idx;
+    if (idx >= 0 && idx < DEFAULT_AVATARS.length) selectedAvatarIndex = idx;
   }
 }
 
 function getSelectedAvatarDataURL(): string | null {
   if (selectedAvatarIndex >= 0 && selectedAvatarIndex < defaultAvatarDataURLs.length) {
-    return defaultAvatarDataURLs[selectedAvatarIndex];
+    const url = defaultAvatarDataURLs[selectedAvatarIndex];
+    return url || null;
   }
   return null;
 }
@@ -93,27 +117,40 @@ function getPlayerAvatarData(): string | undefined {
   return getSelectedAvatarDataURL() || undefined;
 }
 
-function renderAvatarPicker(): void {
-  const grid = document.getElementById('avatar-grid');
-  if (!grid) return;
-  grid.innerHTML = '';
-  defaultAvatarDataURLs.forEach((dataURL, idx) => {
+function renderAvatarGrid(gridEl: HTMLElement, onSelect?: () => void): void {
+  gridEl.innerHTML = '';
+  DEFAULT_AVATARS.forEach((def, idx) => {
     const item = document.createElement('div');
     item.className = 'avatar-item' + (idx === selectedAvatarIndex ? ' selected' : '');
-    item.title = DEFAULT_AVATARS[idx].label;
+    item.title = def.label;
     const img = document.createElement('img');
-    img.src = dataURL;
-    img.alt = DEFAULT_AVATARS[idx].label;
+    if (def.type === 'image') {
+      img.src = defaultAvatarDataURLs[idx] || def.src; // use data URL if loaded, else original
+    } else {
+      img.src = defaultAvatarDataURLs[idx];
+    }
+    img.alt = def.label;
     item.appendChild(img);
+    const labelEl = document.createElement('span');
+    labelEl.className = 'avatar-label';
+    labelEl.textContent = def.label;
+    item.appendChild(labelEl);
     item.addEventListener('click', () => {
       selectedAvatarIndex = idx;
       localStorage.setItem('pumpball_avatar_idx', String(idx));
-      grid.querySelectorAll('.avatar-item').forEach((el, i) => {
+      gridEl.querySelectorAll('.avatar-item').forEach((el, i) => {
         el.classList.toggle('selected', i === idx);
       });
+      onSelect?.();
     });
-    grid.appendChild(item);
+    gridEl.appendChild(item);
   });
+}
+
+// Legacy compat
+function renderAvatarPicker(): void {
+  const grid = document.getElementById('avatar-grid');
+  if (grid) renderAvatarGrid(grid);
 }
 
 // ===== STATE =====
@@ -1142,14 +1179,7 @@ function buildUI() {
           <div id="matches-grid" class="matches-grid"></div>
         </section>
 
-        <!-- Avatar Picker Section -->
-        <section class="avatar-picker-section" id="avatar-picker-section">
-          <div class="section-heading">
-            <h2>Choose Avatar</h2>
-            <span class="heading-sub">Pick your meme character</span>
-          </div>
-          <div id="avatar-grid" class="avatar-grid"></div>
-        </section>
+
 
         <section class="custom-section">
           <div class="custom-info">
@@ -1197,7 +1227,15 @@ function buildUI() {
                   <button id="save-username-btn" class="btn btn-primary btn-sm">Save</button>
                 </div>
               </div>
-              <button id="disconnect-wallet-btn" class="btn btn-danger btn-sm" style="margin-top:12px;max-width:200px">Disconnect Wallet</button>
+              <div class="profile-avatar-picker" style="margin-top:16px">
+                <div class="section-label" style="margin-bottom:8px">CHANGE AVATAR</div>
+                <div id="profile-avatar-grid" class="avatar-grid"></div>
+                <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+                  <button class="btn-upload-custom" id="profile-upload-btn">📷 Upload custom</button>
+                  <input type="file" id="profile-avatar-file" accept="image/*" style="display:none" />
+                </div>
+              </div>
+              <button id="disconnect-wallet-btn" class="btn btn-danger btn-sm" style="margin-top:16px;max-width:200px">Disconnect Wallet</button>
             </div>
             <div id="profile-not-connected" class="not-connected-msg">
               <span class="big-icon">🔗</span>
@@ -1378,15 +1416,16 @@ function buildUI() {
       <div class="welcome-modal">
         <div class="welcome-header">
           <div class="welcome-title">💊 WELCOME TO PUMPBALL</div>
-          <div class="welcome-sub">Set up your player profile</div>
+          <div class="welcome-sub">Choose your avatar &amp; name</div>
         </div>
-        <div class="welcome-avatar-section">
-          <div class="welcome-avatar-wrapper" id="welcome-avatar-wrapper">
-            <div class="welcome-avatar" id="welcome-avatar">💊</div>
-            <div class="welcome-avatar-overlay">📷</div>
+        <div class="welcome-avatar-grid-section">
+          <div class="welcome-section-label">PICK AN AVATAR</div>
+          <div id="welcome-avatar-grid" class="avatar-grid welcome-grid"></div>
+          <div class="welcome-upload-row">
+            <div class="welcome-avatar-mini" id="welcome-avatar-preview">💊</div>
+            <button class="btn-upload-custom" id="welcome-upload-btn">📷 Upload custom</button>
             <input type="file" id="welcome-avatar-input" accept="image/*" style="display:none" />
           </div>
-          <div class="welcome-avatar-label">Click to upload your photo</div>
         </div>
         <div class="welcome-form">
           <label>USERNAME</label>
@@ -1477,19 +1516,36 @@ function setupEventListeners() {
       walletAddrEl.textContent = auth.wallet.slice(0, 4) + '...' + auth.wallet.slice(-4);
     }
 
-    const avatarEl = document.getElementById('welcome-avatar');
-    if (avatarEl) {
-      if (auth.user?.avatar_data) {
-        avatarEl.innerHTML = '<img src="' + auth.user.avatar_data + '" />';
-      } else {
-        avatarEl.textContent = '💊';
-      }
+    // Render avatar grid in welcome modal
+    const welcomeGrid = document.getElementById('welcome-avatar-grid');
+    if (welcomeGrid) {
+      renderAvatarGrid(welcomeGrid, () => {
+        // Update preview when avatar selected
+        updateWelcomeAvatarPreview();
+        welcomePendingFile = null;
+        welcomePendingDataUrl = null;
+      });
     }
+    updateWelcomeAvatarPreview();
 
     const fileInput = document.getElementById('welcome-avatar-input') as HTMLInputElement | null;
     if (fileInput) fileInput.value = '';
 
     modal.classList.add('show');
+  }
+
+  function updateWelcomeAvatarPreview() {
+    const preview = document.getElementById('welcome-avatar-preview');
+    if (!preview) return;
+    const customUrl = welcomePendingDataUrl;
+    const selectedUrl = getSelectedAvatarDataURL();
+    const auth = getAuthState();
+    const url = customUrl || selectedUrl || auth.user?.avatar_data;
+    if (url) {
+      preview.innerHTML = '<img src="' + url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" />';
+    } else {
+      preview.textContent = '💊';
+    }
   }
 
   function hideWelcomeModal() {
@@ -1499,21 +1555,26 @@ function setupEventListeners() {
     welcomePendingDataUrl = null;
   }
 
-  const welcomeAvatarWrapper = document.getElementById('welcome-avatar-wrapper');
+  // Welcome modal — upload custom avatar
+  const welcomeUploadBtn = document.getElementById('welcome-upload-btn');
   const welcomeAvatarInput = document.getElementById('welcome-avatar-input') as HTMLInputElement | null;
-  const welcomeAvatar = document.getElementById('welcome-avatar');
-  if (welcomeAvatarWrapper && welcomeAvatarInput) {
-    welcomeAvatarWrapper.addEventListener('click', () => welcomeAvatarInput.click());
+  if (welcomeUploadBtn && welcomeAvatarInput) {
+    welcomeUploadBtn.addEventListener('click', () => welcomeAvatarInput.click());
     welcomeAvatarInput.addEventListener('change', () => {
       const file = welcomeAvatarInput.files?.[0];
       if (!file) return;
       if (file.size > 2 * 1024 * 1024) { toast('Max 2MB', 'error'); return; }
       welcomePendingFile = file;
+      selectedAvatarIndex = -1; // deselect preset
+      localStorage.removeItem('pumpball_avatar_idx');
       const reader = new FileReader();
       reader.onload = async () => {
         const compressed = await compressAvatar(reader.result as string);
         welcomePendingDataUrl = compressed;
-        if (welcomeAvatar) welcomeAvatar.innerHTML = '<img src="' + compressed + '" />';
+        updateWelcomeAvatarPreview();
+        // Deselect grid items
+        const grid = document.getElementById('welcome-avatar-grid');
+        if (grid) grid.querySelectorAll('.avatar-item').forEach(el => el.classList.remove('selected'));
       };
       reader.readAsDataURL(file);
     });
@@ -1530,12 +1591,23 @@ function setupEventListeners() {
           const u = await updateProfile({ username });
           if (u) {
             myName = u.username;
-            
           }
         }
         if (welcomePendingFile) {
+          // Custom upload
           const u = await uploadAvatar(welcomePendingFile);
           if (!u) toast('Avatar upload failed', 'error');
+        } else if (selectedAvatarIndex >= 0 && defaultAvatarDataURLs[selectedAvatarIndex]) {
+          // Preset avatar selected — upload the data URL as their avatar
+          const dataUrl = defaultAvatarDataURLs[selectedAvatarIndex];
+          if (dataUrl) {
+            // Convert data URL to blob for upload
+            const resp = await fetch(dataUrl);
+            const blob = await resp.blob();
+            const file = new File([blob], 'avatar.jpg', { type: blob.type });
+            const u = await uploadAvatar(file);
+            if (!u) toast('Avatar upload failed', 'error');
+          }
         }
         toast('Profile ready!', 'success');
       } finally {
@@ -1704,7 +1776,7 @@ function setupEventListeners() {
     });
   }
 
-  // Profile - avatar upload
+  // Profile - avatar upload (header PFP click)
   const avatarWrapper = document.getElementById('avatar-wrapper');
   const avatarInput = document.getElementById('avatar-input') as HTMLInputElement;
   if (avatarWrapper && avatarInput) {
@@ -1717,6 +1789,45 @@ function setupEventListeners() {
       const user = await uploadAvatar(file);
       if (user) toast('Avatar updated!', 'success');
       else toast('Upload failed', 'error');
+    });
+  }
+
+  // Profile - avatar grid (preset skins)
+  const profileAvatarGrid = document.getElementById('profile-avatar-grid');
+  if (profileAvatarGrid) {
+    renderAvatarGrid(profileAvatarGrid, async () => {
+      // On preset select, upload as profile avatar
+      const dataUrl = getSelectedAvatarDataURL();
+      if (!dataUrl) return;
+      toast('Updating avatar...', 'info');
+      try {
+        const resp = await fetch(dataUrl);
+        const blob = await resp.blob();
+        const file = new File([blob], 'avatar.jpg', { type: blob.type });
+        const user = await uploadAvatar(file);
+        if (user) toast('Avatar updated!', 'success');
+        else toast('Upload failed', 'error');
+      } catch { toast('Upload failed', 'error'); }
+    });
+  }
+
+  // Profile - custom upload button
+  const profileUploadBtn = document.getElementById('profile-upload-btn');
+  const profileAvatarFile = document.getElementById('profile-avatar-file') as HTMLInputElement | null;
+  if (profileUploadBtn && profileAvatarFile) {
+    profileUploadBtn.addEventListener('click', () => profileAvatarFile.click());
+    profileAvatarFile.addEventListener('change', async () => {
+      const file = profileAvatarFile.files?.[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { toast('Max 2MB', 'error'); return; }
+      toast('Uploading avatar...', 'info');
+      selectedAvatarIndex = -1;
+      localStorage.removeItem('pumpball_avatar_idx');
+      const user = await uploadAvatar(file);
+      if (user) {
+        toast('Avatar updated!', 'success');
+        if (profileAvatarGrid) profileAvatarGrid.querySelectorAll('.avatar-item').forEach(el => el.classList.remove('selected'));
+      } else toast('Upload failed', 'error');
     });
   }
 
@@ -1748,26 +1859,25 @@ function setupEventListeners() {
       const customSection = document.querySelector('.custom-section') as HTMLElement;
       const nameRow = document.querySelector('.lobby-name-row') as HTMLElement;
       const profileSection = document.getElementById('profile-section') as HTMLElement;
-      const avatarPickerSection = document.getElementById('avatar-picker-section') as HTMLElement;
-
       if (nav === 'play') {
         if (matchesSection) matchesSection.style.display = '';
         if (customSection) customSection.style.display = '';
         if (nameRow) nameRow.style.display = '';
-        if (avatarPickerSection) avatarPickerSection.style.display = '';
         if (profileSection) profileSection.classList.remove('active');
         hideLeaderboard();
       } else if (nav === 'profile') {
         if (matchesSection) matchesSection.style.display = 'none';
         if (customSection) customSection.style.display = 'none';
         if (nameRow) nameRow.style.display = 'none';
-        if (avatarPickerSection) avatarPickerSection.style.display = 'none';
         if (profileSection) profileSection.classList.add('active');
+        hideLeaderboard();
+        // Render avatar grid in profile
+        const pg = document.getElementById('profile-avatar-grid');
+        if (pg) renderAvatarGrid(pg);
       } else if (nav === 'leaderboard') {
         if (matchesSection) matchesSection.style.display = 'none';
         if (customSection) customSection.style.display = 'none';
         if (nameRow) nameRow.style.display = 'none';
-        if (avatarPickerSection) avatarPickerSection.style.display = 'none';
         if (profileSection) profileSection.classList.remove('active');
         showLeaderboard();
       } else {
