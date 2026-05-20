@@ -1278,6 +1278,12 @@ function buildUI() {
               <button id="profile-connect-btn" class="btn btn-primary">Connect Wallet</button>
             </div>
           </div>
+
+        <div class="ca-banner">
+          <span class="ca-label">CA:</span>
+          <code class="ca-address" id="ca-address">2iEQvfXCPRMeBTkMELLMLYV3JPjajetHFxykBxxypump</code>
+          <button class="ca-copy-btn" id="ca-copy-btn" title="Copy">📋</button>
+        </div>
       </main>
     </div>
 
@@ -2103,6 +2109,16 @@ function init() {
   startRenderLoop();
   renderSkeletonCards();
   startMatchesPolling();
+
+  // CA copy button
+  document.getElementById('ca-copy-btn')?.addEventListener('click', () => {
+    const addr = document.getElementById('ca-address')?.textContent || '';
+    navigator.clipboard.writeText(addr).then(() => {
+      const btn = document.getElementById('ca-copy-btn')!;
+      btn.textContent = '✅';
+      setTimeout(() => btn.textContent = '📋', 1500);
+    });
+  });
 
   // Restore wallet session if token exists
   restoreSession().then(ok => {
