@@ -34,22 +34,19 @@ html, body {
 
 #app { width: 100%; height: 100%; display: flex; flex-direction: column; }
 
-/* ===== FOOTBALL PITCH LANDING BACKGROUND ===== */
-/* Pitch markings + mown grass stripes, sitting behind everything, blurred */
+/* ===== STADIUM LANDING BACKGROUND ===== */
+/* Real stadium photo, sitting behind everything, blurred */
 body::before {
   content: '';
   position: fixed;
   inset: -4%;
   z-index: -2;
-  background-color: #0c3a22;
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 640' preserveAspectRatio='xMidYMid slice'%3E%3Cg fill='none' stroke='%23eafff1' stroke-width='3' opacity='0.7'%3E%3Crect x='20' y='20' width='960' height='600'/%3E%3Cline x1='500' y1='20' x2='500' y2='620'/%3E%3Ccircle cx='500' cy='320' r='74'/%3E%3Ccircle cx='500' cy='320' r='4' fill='%23eafff1'/%3E%3Crect x='20' y='180' width='132' height='280'/%3E%3Crect x='20' y='250' width='56' height='140'/%3E%3Ccircle cx='112' cy='320' r='3' fill='%23eafff1'/%3E%3Cpath d='M152 252 A74 74 0 0 1 152 388'/%3E%3Crect x='848' y='180' width='132' height='280'/%3E%3Crect x='924' y='250' width='56' height='140'/%3E%3Ccircle cx='888' cy='320' r='3' fill='%23eafff1'/%3E%3Cpath d='M848 252 A74 74 0 0 0 848 388'/%3E%3C/g%3E%3C/svg%3E"),
-    repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 64px, rgba(0,0,0,0.06) 64px 128px),
-    radial-gradient(ellipse at center, #1c6b42 0%, #114d2e 60%, #0a3a20 100%);
-  background-size: cover, auto, cover;
-  background-repeat: no-repeat, repeat, no-repeat;
+  background-color: #07230f;
+  background-image: url("/stadium-bg.jpg");
+  background-size: cover;
+  background-repeat: no-repeat;
   background-position: center;
-  filter: blur(3px) saturate(1.1);
+  filter: blur(4px) saturate(1.05) brightness(0.9);
   transform: scale(1.06);
 }
 
@@ -72,7 +69,7 @@ body::after {
 /* ===== SHARED SIDEBAR ===== */
 .sidebar {
   width: 220px; flex-shrink: 0;
-  background: rgba(15, 23, 36, 0.85);
+  background: rgba(10, 16, 26, 0.55);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-right: 1px solid var(--border);
