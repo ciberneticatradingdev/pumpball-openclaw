@@ -1,4 +1,4 @@
-import type { GameState, PlayerState, FieldConfig, GameMode } from './types';
+import type { GameState, PlayerState, FieldConfig, GameMode, RoomPlayer } from './types';
 import { getFieldConfig } from './types';
 
 function lerp(a: number, b: number, t: number): number {
@@ -328,6 +328,48 @@ export class Renderer {
     if (fieldCache) ctx.drawImage(fieldCache, 0, 0);
     this.drawPlayers(ctx, state.players);
     this.drawBall(ctx, state.ball);
+    ctx.restore();
+  }
+
+  // Static preview of the pitch with players arranged in formation (room screen).
+  // Renders to a separate canvas with its own scale, independent of the game canvas.
+  renderRoomPreview(players: RoomPlayer[], previewCanvas?: HTMLCanvasElement) {
+    const canvas = previewCanvas ?? this.canvas;
+    const ctx = canvas.getContext('2d')!;
+    if (!fieldCache) fieldCache = buildFieldCache();
+
+    // Fit canvas to its container while keeping pitch aspect ratio
+    const wrap = canvas.parentElement!;
+    const cw = wrap.clientWidth - 8;
+    const ch = wrap.clientHeight - 8;
+    // Container not laid out yet (e.g. screen still hidden) — retry next frame
+    if (cw < 40 || ch < 30) {
+      requestAnimationFrame(() => this.renderRoomPreview(players, previewCanvas));
+      return;
+    }
+    const scale = Math.min(cw / CANVAS_W, ch / CANVAS_H);
+    canvas.width = Math.floor(CANVAS_W * scale);
+    canvas.height = Math.floor(CANVAS_H * scale);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.scale(scale, scale);
+    ctx.drawImage(fieldCache, 0, 0);
+
+    const placed: PlayerState[] = [];
+    const place = (arr: RoomPlayer[], sign: number) => {
+      const n = arr.length;
+      arr.forEach((p, i) => {
+        const x = sign * fc.FIELD_W * 0.5;
+        const y = n <= 1 ? 0 : -fc.FIELD_H * 0.55 + (i * (fc.FIELD_H * 1.1)) / (n - 1);
+        placed.push({ ...p, x, y, velocityX: 0, velocityY: 0, spaceClicked: false });
+      });
+    };
+    place(players.filter((p) => p.team === 'red'), -1);
+    place(players.filter((p) => p.team === 'blue'), 1);
+
+    this.drawPlayers(ctx, placed);
+    this.drawBall(ctx, { x: 0, y: 0 });
     ctx.restore();
   }
 

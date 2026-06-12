@@ -210,6 +210,34 @@ function showScreen(id: 'lobby' | 'room' | 'game') {
   $(`#${id}-screen`).classList.add('active');
 }
 
+// ===== ROOM URL (shareable / spectator links) =====
+function inviteLinkFor(code: string): string {
+  return `${window.location.origin}${window.location.pathname}?r=${encodeURIComponent(code)}`;
+}
+
+function setRoomUrl(code: string) {
+  const url = inviteLinkFor(code);
+  if (window.location.href !== url) {
+    window.history.replaceState({ roomCode: code }, '', url);
+  }
+}
+
+function clearRoomUrl() {
+  const base = `${window.location.origin}${window.location.pathname}`;
+  if (window.location.href !== base) {
+    window.history.replaceState({}, '', base);
+  }
+}
+
+function getRoomCodeFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('r');
+  return code ? code.toUpperCase().trim() : null;
+}
+
+// Pending auto-join from URL — consumed once the socket connects
+let pendingJoinCode: string | null = null;
+
 // ===== TOAST =====
 function toast(msg: string, type: 'success' | 'error' | 'info' = 'info') {
   const container = $('#toast-container');
@@ -545,6 +573,17 @@ function renderRoomInfo(info: RoomInfo) {
   document.querySelectorAll('.btn-team').forEach(btn => btn.classList.remove('active'));
   const activeBtn = $<HTMLElement>(`.btn-team.${myTeam === 'spectator' ? 'spec' : myTeam}`);
   if (activeBtn) activeBtn.classList.add('active');
+
+  // Render the pitch preview with players in formation
+  renderRoomPreview(info);
+}
+
+// Render static pitch preview in the room screen
+function renderRoomPreview(info: RoomInfo) {
+  const canvas = document.getElementById('room-preview-canvas') as HTMLCanvasElement | null;
+  if (!canvas || !renderer) return;
+  if (info.mode) renderer.setFieldConfig(info.mode);
+  renderer.renderRoomPreview(info.players, canvas);
 }
 
 function renderGamePlayers(state: GameState) {
@@ -657,6 +696,21 @@ function setupSocket() {
     } else {
       if (overlay) overlay.style.display = 'none';
       toast('Connected', 'success');
+
+      // Auto-join room from shareable URL (?r=CODE) — players & spectators
+      if (pendingJoinCode && !currentRoom) {
+        const code = pendingJoinCode;
+        pendingJoinCode = null;
+        const name = getPlayerName();
+        myName = name;
+        toast(`Joining room ${code}...`, 'info');
+        socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData() }, (success: boolean, error?: string) => {
+          if (!success) {
+            toast(error || 'Could not join room from link', 'error');
+            clearRoomUrl();
+          }
+        });
+      }
     }
   });
 
@@ -693,6 +747,7 @@ function setupSocket() {
     currentRoom = info;
     myId = socket.id ?? '';
     if (renderer) renderer.setMyId(myId);
+    setRoomUrl(info.code);
     const me = info.players.find(p => p.id === myId);
     myTeam = me?.team ?? 'spectator';
     const overlay = document.getElementById('reconnect-overlay');
@@ -715,6 +770,7 @@ function setupSocket() {
   socket.on('roomJoined', (info: RoomInfo) => {
     currentRoom = info;
     stopMatchesPolling();
+    setRoomUrl(info.code);
     // Set field config based on room mode
     if (renderer && info.mode) {
       renderer.setFieldConfig(info.mode);
@@ -1071,6 +1127,7 @@ function showGameOver(winner: Team | null, score: { red: number; blue: number },
       socket.emit('leaveRoom');
       currentRoom = null;
       isInGame = false;
+      clearRoomUrl();
       document.dispatchEvent(new Event('gameStopped'));
       showScreen('lobby');
       startMatchesPolling();
@@ -1298,6 +1355,7 @@ function buildUI() {
               <span id="room-code-value" class="room-code" title="Click to copy">------</span>
             </div>
             <div class="room-code-hint">Share this code with friends</div>
+            <button id="room-invite-btn" class="btn btn-secondary btn-sm" style="margin-top:10px; width:100%">🔗 Copy Invite Link</button>
           </div>
           <div class="room-main">
             <div>
@@ -1335,6 +1393,12 @@ function buildUI() {
             <div id="room-waiting-msg" style="text-align:center; font-size:12px; color:var(--text-muted, #888); margin-bottom:8px">Waiting for players...</div>
             <button id="leave-room-btn" class="btn btn-danger btn-sm">Leave Room</button>
           </div>
+        </div>
+        <div class="room-pitch">
+          <div class="room-pitch-canvas-wrap">
+            <canvas id="room-preview-canvas"></canvas>
+          </div>
+          <div class="room-pitch-caption">Live preview · share the link to invite players & spectators</div>
         </div>
         <div class="chat-panel">
           <div class="chat-header"><span class="status-dot"></span>Room Chat</div>
@@ -1508,14 +1572,17 @@ function setupEventListeners() {
       toast(`Room ${roomCode} created!`, 'success');
       stopMatchesPolling();
       showScreen('room');
-      currentRoom = {
+      const newRoom: RoomInfo = {
         code: roomCode,
         players: [{ id: myId, name, team: 'spectator' }],
         hostId: myId,
         status: 'waiting',
         score: { red: 0, blue: 0 },
+        mode: '4v4',
       };
-      renderRoomInfo(currentRoom);
+      currentRoom = newRoom;
+      setRoomUrl(roomCode);
+      renderRoomInfo(newRoom);
       const roomChat = $<HTMLElement>('#room-chat-messages');
       roomChat.innerHTML = '';
       addSystemMessage(roomChat, `Room ${roomCode} created!`);
@@ -1932,6 +1999,7 @@ function setupEventListeners() {
     socket.emit('leaveRoom');
     currentRoom = null; isInGame = false; isGameOver = false;
     hideGameOver();
+    clearRoomUrl();
     document.dispatchEvent(new Event('gameStopped'));
     showScreen('lobby');
     startMatchesPolling();
@@ -1942,6 +2010,14 @@ function setupEventListeners() {
   $<HTMLElement>('#room-code-value').addEventListener('click', () => {
     const code = currentRoom?.code ?? '';
     navigator.clipboard.writeText(code).then(() => toast(`Copied: ${code}`, 'success'));
+  });
+
+  // Room — Copy invite link (shareable URL for players & spectators)
+  $<HTMLButtonElement>('#room-invite-btn').addEventListener('click', () => {
+    const code = currentRoom?.code ?? '';
+    if (!code) return;
+    const link = inviteLinkFor(code);
+    navigator.clipboard.writeText(link).then(() => toast('Invite link copied! 🔗', 'success'));
   });
 
   // Room — Teams
@@ -1974,6 +2050,7 @@ function setupEventListeners() {
     socket.emit('leaveRoom');
     currentRoom = null; isInGame = false; isGameOver = false;
     hideGameOver();
+    clearRoomUrl();
     document.dispatchEvent(new Event('gameStopped'));
     showScreen('lobby');
     startMatchesPolling();
@@ -2004,6 +2081,10 @@ function setupEventListeners() {
   // Resize
   window.addEventListener('resize', () => {
     if (renderer && isInGame) renderer.resize();
+    // Redraw room pitch preview when room screen is visible
+    if (renderer && currentRoom && !isInGame && document.getElementById('room-screen')?.classList.contains('active')) {
+      renderRoomPreview(currentRoom);
+    }
   });
 }
 
@@ -2102,6 +2183,8 @@ function updateWalletUI(connected: boolean, user: UserProfile | null) {
 function init() {
   generateDefaultAvatars();
   buildUI();
+  // Read shareable room link before connecting (?r=CODE)
+  pendingJoinCode = getRoomCodeFromUrl();
   setupSocket();
   setupKeyboard();
   setupEventListeners();
