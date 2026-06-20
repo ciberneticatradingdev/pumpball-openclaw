@@ -33,7 +33,7 @@ export async function initDB(): Promise<void> {
   if (!pool) return;
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS pumpball_users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       wallet_address TEXT UNIQUE NOT NULL,
       username TEXT NOT NULL DEFAULT 'Player',
@@ -47,21 +47,21 @@ export async function initDB(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
-    CREATE INDEX IF NOT EXISTS idx_users_xp ON users(xp DESC);
+    CREATE INDEX IF NOT EXISTS idx_pumpball_users_wallet ON users(wallet_address);
+    CREATE INDEX IF NOT EXISTS idx_pumpball_users_xp ON users(xp DESC);
 
     -- XP ledger: every XP gain is recorded with a timestamp so we can compute
     -- the rolling 24h XP per player for the daily token distribution.
-    CREATE TABLE IF NOT EXISTS xp_events (
+    CREATE TABLE IF NOT EXISTS pumpball_xp_events (
       id BIGSERIAL PRIMARY KEY,
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES pumpball_users(id) ON DELETE CASCADE,
       amount INTEGER NOT NULL,
       reason TEXT NOT NULL DEFAULT 'game',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE INDEX IF NOT EXISTS idx_xp_events_created ON xp_events(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_xp_events_user ON xp_events(user_id);
+    CREATE INDEX IF NOT EXISTS idx_pumpball_xp_events_created ON xp_events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pumpball_xp_events_user ON xp_events(user_id);
 
     -- Room-specific wins for manual rewards (e.g. PUMP-1 1v1 ranked matches)
     CREATE TABLE IF NOT EXISTS room_wins (
@@ -89,7 +89,7 @@ export async function getOrCreateUser(walletAddress: string): Promise<User | nul
 
   // Try to find existing
   const existing = await pool.query(
-    'SELECT * FROM users WHERE wallet_address = $1',
+    'SELECT * FROM pumpball_users WHERE wallet_address = $1',
     [walletAddress],
   );
 
@@ -98,7 +98,7 @@ export async function getOrCreateUser(walletAddress: string): Promise<User | nul
   // Create new
   const shortName = 'Player_' + walletAddress.slice(0, 4);
   const result = await pool.query(
-    'INSERT INTO users (wallet_address, username) VALUES ($1, $2) RETURNING *',
+    'INSERT INTO pumpball_users (wallet_address, username) VALUES ($1, $2) RETURNING *',
     [walletAddress, shortName],
   );
 
@@ -107,20 +107,20 @@ export async function getOrCreateUser(walletAddress: string): Promise<User | nul
 
 export async function getUserById(id: string): Promise<User | null> {
   if (!pool) return null;
-  const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+  const result = await pool.query('SELECT * FROM pumpball_users WHERE id = $1', [id]);
   return result.rows[0] || null;
 }
 
 export async function getUserByWallet(wallet: string): Promise<User | null> {
   if (!pool) return null;
-  const result = await pool.query('SELECT * FROM users WHERE wallet_address = $1', [wallet]);
+  const result = await pool.query('SELECT * FROM pumpball_users WHERE wallet_address = $1', [wallet]);
   return result.rows[0] || null;
 }
 
 export async function setUsername(userId: string, username: string): Promise<void> {
   if (!pool) return;
   await pool.query(
-    'UPDATE users SET username = $1, updated_at = NOW() WHERE id = $2',
+    'UPDATE pumpball_users SET username = $1, updated_at = NOW() WHERE id = $2',
     [username.trim().slice(0, 20), userId],
   );
 }
@@ -128,7 +128,7 @@ export async function setUsername(userId: string, username: string): Promise<voi
 export async function setAvatar(userId: string, avatarData: string): Promise<void> {
   if (!pool) return;
   await pool.query(
-    'UPDATE users SET avatar_data = $1, updated_at = NOW() WHERE id = $2',
+    'UPDATE pumpball_users SET avatar_data = $1, updated_at = NOW() WHERE id = $2',
     [avatarData, userId],
   );
 }
@@ -142,7 +142,7 @@ export async function addGameStats(userId: string, won: boolean, goals: number):
   const xpGain = PLAY_XP + (won ? WIN_XP : 0) + goals * GOAL_XP;
 
   await pool.query(
-    `UPDATE users SET
+    `UPDATE pumpball_users SET
       games_played = games_played + 1,
       games_won = games_won + $1,
       goals_scored = goals_scored + $2,
@@ -155,7 +155,7 @@ export async function addGameStats(userId: string, won: boolean, goals: number):
 
   // Record in the rolling ledger for daily token distribution
   await pool.query(
-    `INSERT INTO xp_events (user_id, amount, reason) VALUES ($1, $2, $3)`,
+    `INSERT INTO pumpball_xp_events (user_id, amount, reason) VALUES ($1, $2, $3)`,
     [userId, xpGain, won ? 'win' : 'game'],
   );
 }
@@ -165,7 +165,7 @@ export async function getLeaderboard(limit = 20): Promise<Partial<User>[]> {
   const result = await pool.query(
     `SELECT id, wallet_address, username, avatar_data, xp, level,
             games_played, games_won, goals_scored
-     FROM users ORDER BY xp DESC LIMIT $1`,
+     FROM pumpball_users ORDER BY xp DESC LIMIT $1`,
     [limit],
   );
   return result.rows;
@@ -237,8 +237,8 @@ export async function getRecentXpLeaderboard(hours = 24, limit = 100): Promise<R
   const result = await pool.query(
     `SELECT u.id AS user_id, u.wallet_address, u.username, u.avatar_data,
             COALESCE(SUM(e.amount), 0)::int AS xp_24h
-     FROM xp_events e
-     JOIN users u ON u.id = e.user_id
+     FROM pumpball_xp_events e
+     JOIN pumpball_users u ON u.id = e.user_id
      WHERE e.created_at >= NOW() - ($1 || ' hours')::interval
      GROUP BY u.id, u.wallet_address, u.username, u.avatar_data
      HAVING COALESCE(SUM(e.amount), 0) > 0
@@ -254,7 +254,7 @@ export async function getTotalRecentXp(hours = 24): Promise<number> {
   if (!pool) return 0;
   const result = await pool.query(
     `SELECT COALESCE(SUM(amount), 0)::int AS total
-     FROM xp_events
+     FROM pumpball_xp_events
      WHERE created_at >= NOW() - ($1 || ' hours')::interval`,
     [hours],
   );
