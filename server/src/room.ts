@@ -113,12 +113,12 @@ export class Room {
     return `room:${this.code}`;
   }
 
-  addPlayer(id: string, name: string, avatarData?: string): boolean {
+  addPlayer(id: string, name: string, avatarData?: string, options?: { spectatorOnly?: boolean }): boolean {
     this.players.set(id, { id, name, team: 'spectator', avatarData });
     if (!this.hostId || !this.players.has(this.hostId)) {
       this.hostId = id;
     }
-    if (this.status === 'waiting') {
+    if (this.status === 'waiting' && !options?.spectatorOnly) {
       this.autoAssignTeam(id);
     }
     this.broadcastRoomInfo();

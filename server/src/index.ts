@@ -24,6 +24,7 @@ const io = new Server(httpServer, {
 const rooms = new Map<string, Room>();
 const playerRooms = new Map<string, string>(); // socketId -> roomCode
 const socketToUser = new Map<string, string>(); // socketId -> userId (wallet-authed)
+const roomAuthenticatedPlayers = new Map<string, Set<string>>(); // roomCode -> Set<socketId>
 
 // Reconnection state
 const reconnectData = new Map<string, { socketId: string; roomCode: string; playerName: string; avatarData?: string }>();
@@ -132,19 +133,22 @@ io.on('connection', (socket) => {
       if (!room) return callback(false, 'Room not found');
       if (room.hasPlayer(socket.id)) return callback(false, 'Already in this room');
 
-      // PUMP-1, PUMP-4, PUMP-7 require a valid wallet JWT
+      // PUMP-1, PUMP-4, PUMP-7: wallet-auth required to play (not to spectate)
       const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
-      if (restrictedRooms.includes(roomCode)) {
-        const token = typeof data.token === 'string' ? data.token : undefined;
-        const payload = token ? verifyToken(token) : null;
-        if (!payload?.userId) {
-          return callback(false, '🔒 Connect wallet to join this room');
-        }
-        socketToUser.set(socket.id, payload.userId);
+      const isRestricted = restrictedRooms.includes(roomCode);
+      const token = typeof data.token === 'string' ? data.token : undefined;
+      const payload = token ? verifyToken(token) : null;
+      const canPlay = isRestricted ? !!payload?.userId : true;
+      if (payload?.userId) socketToUser.set(socket.id, payload.userId);
+
+      // Track who is allowed to play in restricted rooms
+      if (isRestricted && canPlay) {
+        if (!roomAuthenticatedPlayers.has(roomCode)) roomAuthenticatedPlayers.set(roomCode, new Set());
+        roomAuthenticatedPlayers.get(roomCode)!.add(socket.id);
       }
 
-      // Always allow joining (as spectator if game in progress)
-      const success = room.addPlayer(socket.id, playerName, avatarData);
+      // Always allow joining; unauthenticated users in restricted rooms spectate only
+      const success = room.addPlayer(socket.id, playerName, avatarData, { spectatorOnly: isRestricted && !canPlay });
       if (!success) return callback(false, 'Could not join room');
 
       playerRooms.set(socket.id, roomCode);
@@ -175,6 +179,11 @@ io.on('connection', (socket) => {
     if (!['red', 'blue', 'spectator'].includes(team)) return;
     const code = playerRooms.get(socket.id);
     if (!code) return;
+    const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+    if (restrictedRooms.includes(code) && team !== 'spectator') {
+      const authed = roomAuthenticatedPlayers.get(code);
+      if (!authed?.has(socket.id)) return;
+    }
     const room = rooms.get(code);
     room?.changeTeam(socket.id, team);
   });
@@ -303,6 +312,14 @@ io.on('connection', (socket) => {
 
   function handleLeave(socketId: string, immediate: boolean = true) {
     const code = playerRooms.get(socketId);
+    // Clean up restricted-room auth tracking
+    if (code) {
+      const authed = roomAuthenticatedPlayers.get(code);
+      if (authed) {
+        authed.delete(socketId);
+        if (authed.size === 0) roomAuthenticatedPlayers.delete(code);
+      }
+    }
     if (!code) {
       socketToToken.delete(socketId);
       return;

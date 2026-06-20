@@ -450,7 +450,7 @@ function renderMatchCards(matches: any[]) {
           </div>
         </div>
         <div class="match-card-footer">
-          <span>${m.mode || '4v4'} · ${["PUMP-1","PUMP-4","PUMP-7"].includes(m.code) ? "🔒 WALLET ONLY" : "FREE"}</span>
+          <span>${m.mode || '4v4'} · ${["PUMP-1","PUMP-4","PUMP-7"].includes(m.code) ? "🔒 WALLET TO PLAY" : "FREE"}</span>
           <span>👥 ${m.players}/${maxPlayers}</span>
         </div>
       `;
@@ -461,13 +461,9 @@ function renderMatchCards(matches: any[]) {
 
       card.addEventListener('click', () => {
         const auth = getAuthState();
-        if (isRestricted && !auth.token) {
-          toast('🔒 Connect wallet to join this room', 'error');
-          return;
-        }
         const name = getPlayerName();
         myName = name;
-        if (m.status === 'playing') {
+        if (m.status === 'playing' || (isRestricted && !auth.token)) {
           toast('Joining as spectator...', 'info');
         } else {
           toast('Joining team...', 'info');
@@ -566,7 +562,13 @@ function renderRoomInfo(info: RoomInfo) {
     neededEl.className = `players-needed-msg${stillNeeded === 0 ? ' ready' : ''}`;
   }
   if (waitingMsg && info.countdown == null) {
-    waitingMsg.textContent = `Waiting for players... (${totalPlayers}/${totalNeeded})`;
+    const auth = getAuthState();
+    const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+    if (restrictedRooms.includes(info.code) && !auth.token) {
+      waitingMsg.textContent = `Spectators only — connect wallet to play (${totalPlayers}/${totalNeeded})`;
+    } else {
+      waitingMsg.textContent = `Waiting for players... (${totalPlayers}/${totalNeeded})`;
+    }
   }
 
   spectatorList.innerHTML = '';
@@ -715,21 +717,15 @@ function setupSocket() {
         const code = pendingJoinCode;
         pendingJoinCode = null;
         const auth = getAuthState();
-        const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
-        if (restrictedRooms.includes(code) && !auth.token) {
-          toast('🔒 Connect wallet to join this room', 'error');
-          clearRoomUrl();
-        } else {
-          const name = getPlayerName();
-          myName = name;
-          toast(`Joining room ${code}...`, 'info');
-          socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData(), token: auth.token || undefined }, (success: boolean, error?: string) => {
-            if (!success) {
-              toast(error || 'Could not join room from link', 'error');
-              clearRoomUrl();
-            }
-          });
-        }
+        const name = getPlayerName();
+        myName = name;
+        toast(`Joining room ${code}...`, 'info');
+        socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData(), token: auth.token || undefined }, (success: boolean, error?: string) => {
+          if (!success) {
+            toast(error || 'Could not join room from link', 'error');
+            clearRoomUrl();
+          }
+        });
       }
     }
   });
@@ -1617,12 +1613,6 @@ function setupEventListeners() {
     const code = $<HTMLInputElement>('#join-code-input').value.trim().toUpperCase();
     const errEl = $<HTMLElement>('#lobby-error');
     if (!code) { errEl.textContent = 'Enter a room code'; return; }
-    const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
-    if (restrictedRooms.includes(code) && !auth.token) {
-      errEl.textContent = '🔒 Connect wallet to join this room';
-      toast('🔒 Connect wallet to join this room', 'error');
-      return;
-    }
     myName = name;
     errEl.textContent = '';
     socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData(), token: auth.token || undefined }, (success: boolean, error?: string) => {
@@ -2054,7 +2044,16 @@ function setupEventListeners() {
 
   // Room — Teams
   document.querySelectorAll<HTMLButtonElement>('.btn-team').forEach(btn => {
-    btn.addEventListener('click', () => { socket.emit('changeTeam', btn.dataset.team as Team); });
+    btn.addEventListener('click', () => {
+      const team = btn.dataset.team as Team;
+      const auth = getAuthState();
+      const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+      if (team !== 'spectator' && currentRoom && restrictedRooms.includes(currentRoom.code) && !auth.token) {
+        toast('\ud83d\udd12 Connect wallet to play in this room', 'error');
+        return;
+      }
+      socket.emit('changeTeam', team);
+    });
   });
 
   // Room chat
