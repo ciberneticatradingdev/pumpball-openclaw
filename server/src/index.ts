@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { Room } from './room';
 import { generateNonce, verifySignature, createToken, verifyToken } from './auth';
-import { getUserById, setUsername, setAvatar, getLeaderboard, initDB, addGameStats, getRecentXpLeaderboard, getTotalRecentXp } from './database';
+import { getUserById, setUsername, setAvatar, getLeaderboard, initDB, addGameStats, getRecentXpLeaderboard, getTotalRecentXp, recordRoomWin, getRoomWins, markRoomWinRewarded } from './database';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
@@ -25,6 +25,24 @@ const rooms = new Map<string, Room>();
 const playerRooms = new Map<string, string>(); // socketId -> roomCode
 const socketToUser = new Map<string, string>(); // socketId -> userId (wallet-authed)
 const roomAuthenticatedPlayers = new Map<string, Set<string>>(); // roomCode -> Set<socketId>
+
+// Persist PUMP-1 wins for manual rewards
+async function handleRoomGameOver(
+  code: string,
+  winner: 'red' | 'blue',
+  score: { red: number; blue: number },
+  players: Array<{ id: string; name: string; team: 'red' | 'blue' | 'spectator' }>,
+) {
+  if (code !== 'PUMP-1') return;
+  const winners = players.filter(p => p.team === winner);
+  for (const p of winners) {
+    const userId = socketToUser.get(p.id);
+    if (!userId) continue;
+    const user = await getUserById(userId).catch(() => null);
+    if (!user) continue;
+    await recordRoomWin(code, winner, user.wallet_address, p.name, score.red, score.blue).catch(() => {});
+  }
+}
 
 // Reconnection state
 const reconnectData = new Map<string, { socketId: string; roomCode: string; playerName: string; avatarData?: string }>();
@@ -58,7 +76,7 @@ const PERSISTENT_CODES = PERSISTENT_ROOMS.map(r => r.code);
 function createPersistentRooms() {
   for (const { code, mode } of PERSISTENT_ROOMS) {
     if (rooms.has(code)) continue;
-    const room = new Room(code, '', '', io, { persistent: true, mode });
+    const room = new Room(code, '', '', io, { persistent: true, mode, onGameOver: handleRoomGameOver });
     rooms.set(code, room);
   }
   console.log(`[+] ${PERSISTENT_ROOMS.length} persistent rooms ready: ${PERSISTENT_CODES.join(', ')}`);
@@ -106,7 +124,7 @@ io.on('connection', (socket) => {
     } else {
       playerName = 'Player';
     }
-    const room = new Room(code, socket.id, playerName, io, { mode: '4v4' });
+    const room = new Room(code, socket.id, playerName, io, { mode: '4v4', onGameOver: handleRoomGameOver });
     rooms.set(code, room);
     playerRooms.set(socket.id, code);
     socket.join(room.roomKey);
@@ -134,7 +152,7 @@ io.on('connection', (socket) => {
       if (room.hasPlayer(socket.id)) return callback(false, 'Already in this room');
 
       // PUMP-1, PUMP-4, PUMP-7: wallet-auth required to play (not to spectate)
-      const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+      const restrictedRooms = ['PUMP-1'];
       const isRestricted = restrictedRooms.includes(roomCode);
       const token = typeof data.token === 'string' ? data.token : undefined;
       const payload = token ? verifyToken(token) : null;
@@ -179,7 +197,7 @@ io.on('connection', (socket) => {
     if (!['red', 'blue', 'spectator'].includes(team)) return;
     const code = playerRooms.get(socket.id);
     if (!code) return;
-    const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+    const restrictedRooms = ['PUMP-1'];
     if (restrictedRooms.includes(code) && team !== 'spectator') {
       const authed = roomAuthenticatedPlayers.get(code);
       if (!authed?.has(socket.id)) return;
@@ -482,6 +500,26 @@ app.post('/api/profile/avatar', authMiddleware, async (req: any, res) => {
 app.get('/api/leaderboard', async (_req, res) => {
   const players = await getLeaderboard(20);
   res.json({ players });
+});
+
+// PUMP-1 wins ledger (for manual rewards)
+app.get('/api/room-wins', async (req, res) => {
+  const roomCode = typeof req.query.room === 'string' ? req.query.room : 'PUMP-1';
+  const onlyUnrewarded = req.query.unrewarded === 'true';
+  const limit = Math.min(1000, parseInt(req.query.limit as string, 10) || 100);
+  const wins = await getRoomWins(roomCode, onlyUnrewarded, limit);
+  res.json({ room: roomCode, wins });
+});
+
+app.post('/api/room-wins/:id/rewarded', async (req, res) => {
+  const adminToken = req.headers['x-admin-token'];
+  if (!process.env.ADMIN_TOKEN || adminToken !== process.env.ADMIN_TOKEN) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+  await markRoomWinRewarded(id);
+  res.json({ success: true });
 });
 
 // Initialize database then start

@@ -49,6 +49,36 @@ export async function initDB(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
     CREATE INDEX IF NOT EXISTS idx_users_xp ON users(xp DESC);
+
+    -- XP ledger: every XP gain is recorded with a timestamp so we can compute
+    -- the rolling 24h XP per player for the daily token distribution.
+    CREATE TABLE IF NOT EXISTS xp_events (
+      id BIGSERIAL PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount INTEGER NOT NULL,
+      reason TEXT NOT NULL DEFAULT 'game',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_xp_events_created ON xp_events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_xp_events_user ON xp_events(user_id);
+
+    -- Room-specific wins for manual rewards (e.g. PUMP-1 1v1 ranked matches)
+    CREATE TABLE IF NOT EXISTS room_wins (
+      id BIGSERIAL PRIMARY KEY,
+      room_code TEXT NOT NULL,
+      winner_team TEXT NOT NULL,
+      winner_wallet TEXT NOT NULL,
+      winner_username TEXT,
+      score_red INTEGER NOT NULL DEFAULT 0,
+      score_blue INTEGER NOT NULL DEFAULT 0,
+      rewarded BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_room_wins_code ON room_wins(room_code);
+    CREATE INDEX IF NOT EXISTS idx_room_wins_rewarded ON room_wins(rewarded);
+    CREATE INDEX IF NOT EXISTS idx_room_wins_created ON room_wins(created_at DESC);
   `);
 
   console.log('✅ Database tables ready');
@@ -105,7 +135,12 @@ export async function setAvatar(userId: string, avatarData: string): Promise<voi
 
 export async function addGameStats(userId: string, won: boolean, goals: number): Promise<void> {
   if (!pool) return;
-  const xpGain = won ? 25 : 10 + goals * 5;
+  // XP model: base for playing + win bonus + per-goal bonus
+  const PLAY_XP = 10;
+  const WIN_XP = 25;
+  const GOAL_XP = 5;
+  const xpGain = PLAY_XP + (won ? WIN_XP : 0) + goals * GOAL_XP;
+
   await pool.query(
     `UPDATE users SET
       games_played = games_played + 1,
@@ -116,6 +151,12 @@ export async function addGameStats(userId: string, won: boolean, goals: number):
       updated_at = NOW()
     WHERE id = $4`,
     [won ? 1 : 0, goals, xpGain, userId],
+  );
+
+  // Record in the rolling ledger for daily token distribution
+  await pool.query(
+    `INSERT INTO xp_events (user_id, amount, reason) VALUES ($1, $2, $3)`,
+    [userId, xpGain, won ? 'win' : 'game'],
   );
 }
 
@@ -128,6 +169,96 @@ export async function getLeaderboard(limit = 20): Promise<Partial<User>[]> {
     [limit],
   );
   return result.rows;
+}
+
+export type RoomWin = {
+  id: number;
+  room_code: string;
+  winner_team: string;
+  winner_wallet: string;
+  winner_username: string | null;
+  score_red: number;
+  score_blue: number;
+  rewarded: boolean;
+  created_at: string;
+};
+
+export async function recordRoomWin(
+  roomCode: string,
+  winnerTeam: string,
+  winnerWallet: string,
+  winnerUsername: string,
+  scoreRed: number,
+  scoreBlue: number,
+): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO room_wins (room_code, winner_team, winner_wallet, winner_username, score_red, score_blue)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [roomCode, winnerTeam, winnerWallet, winnerUsername, scoreRed, scoreBlue],
+  );
+}
+
+export async function getRoomWins(roomCode: string, onlyUnrewarded = false, limit = 100): Promise<RoomWin[]> {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT * FROM room_wins
+     WHERE room_code = $1 ${onlyUnrewarded ? 'AND rewarded = FALSE' : ''}
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [roomCode, limit],
+  );
+  return result.rows;
+}
+
+export async function markRoomWinRewarded(winId: number): Promise<void> {
+  if (!pool) return;
+  await pool.query(
+    'UPDATE room_wins SET rewarded = TRUE WHERE id = $1',
+    [winId],
+  );
+}
+
+// ===== DAILY TOKEN REWARDS =====
+// 1,000,000 $PUMPBALL distributed every 24h, split pro-rata by XP earned in the
+// trailing 24h window, until the World Cup final (2026-07-19).
+
+export type RewardRow = {
+  user_id: string;
+  wallet_address: string;
+  username: string;
+  avatar_data: string | null;
+  xp_24h: number;
+};
+
+// Returns players ranked by XP earned in the trailing `hours` window.
+export async function getRecentXpLeaderboard(hours = 24, limit = 100): Promise<RewardRow[]> {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT u.id AS user_id, u.wallet_address, u.username, u.avatar_data,
+            COALESCE(SUM(e.amount), 0)::int AS xp_24h
+     FROM xp_events e
+     JOIN users u ON u.id = e.user_id
+     WHERE e.created_at >= NOW() - ($1 || ' hours')::interval
+     GROUP BY u.id, u.wallet_address, u.username, u.avatar_data
+     HAVING COALESCE(SUM(e.amount), 0) > 0
+     ORDER BY xp_24h DESC
+     LIMIT $2`,
+    [hours, limit],
+  );
+  return result.rows;
+}
+
+// Total XP earned across all players in the trailing window (denominator).
+export async function getTotalRecentXp(hours = 24): Promise<number> {
+  if (!pool) return 0;
+  const result = await pool.query(
+    `SELECT COALESCE(SUM(amount), 0)::int AS total
+     FROM xp_events
+     WHERE created_at >= NOW() - ($1 || ' hours')::interval`,
+    [hours],
+  );
+  return result.rows[0]?.total ?? 0;
 }
 
 export default pool;

@@ -450,12 +450,12 @@ function renderMatchCards(matches: any[]) {
           </div>
         </div>
         <div class="match-card-footer">
-          <span>${m.mode || '4v4'} · ${["PUMP-1","PUMP-4","PUMP-7"].includes(m.code) ? "🔒 WALLET TO PLAY" : "FREE"}</span>
+          <span>${m.mode || '4v4'} · ${["PUMP-1"].includes(m.code) ? "🔒 WALLET TO PLAY" : "FREE"}</span>
           <span>👥 ${m.players}/${maxPlayers}</span>
         </div>
       `;
 
-      const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+      const restrictedRooms = ['PUMP-1'];
       const isRestricted = restrictedRooms.includes(m.code);
       if (isRestricted) card.classList.add('restricted-room');
 
@@ -563,7 +563,7 @@ function renderRoomInfo(info: RoomInfo) {
   }
   if (waitingMsg && info.countdown == null) {
     const auth = getAuthState();
-    const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+    const restrictedRooms = ['PUMP-1'];
     if (restrictedRooms.includes(info.code) && !auth.token) {
       waitingMsg.textContent = `Spectators only — connect wallet to play (${totalPlayers}/${totalNeeded})`;
     } else {
@@ -2047,7 +2047,7 @@ function setupEventListeners() {
     btn.addEventListener('click', () => {
       const team = btn.dataset.team as Team;
       const auth = getAuthState();
-      const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+      const restrictedRooms = ['PUMP-1'];
       if (team !== 'spectator' && currentRoom && restrictedRooms.includes(currentRoom.code) && !auth.token) {
         toast('\ud83d\udd12 Connect wallet to play in this room', 'error');
         return;

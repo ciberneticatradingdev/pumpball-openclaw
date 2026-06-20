@@ -88,12 +88,28 @@ export class Room {
   private rematchTimeout: ReturnType<typeof setTimeout> | null = null;
   private awaitingRematch = false;
 
+  private onGameOver?: (
+    code: string,
+    winner: 'red' | 'blue',
+    score: { red: number; blue: number },
+    players: Array<{ id: string; name: string; team: Team }>,
+  ) => void;
+
   constructor(
     code: string,
     hostId: string,
     hostName: string,
     io: Server,
-    options: { persistent?: boolean; mode?: GameMode } = {},
+    options: {
+      persistent?: boolean;
+      mode?: GameMode;
+      onGameOver?: (
+        code: string,
+        winner: 'red' | 'blue',
+        score: { red: number; blue: number },
+        players: Array<{ id: string; name: string; team: Team }>,
+      ) => void;
+    } = {},
   ) {
     this.code = code;
     this.hostId = hostId;
@@ -103,6 +119,7 @@ export class Room {
     this.maxTeamSize = getMaxTeamSize(this.mode);
     this.maxPlayers = getMaxPlayers(this.mode);
     this.fieldConfig = getFieldConfig(this.mode);
+    this.onGameOver = options.onGameOver;
     if (hostId) {
       this.players.set(hostId, { id: hostId, name: hostName, team: 'spectator' });
       this.autoAssignTeam(hostId);
@@ -364,6 +381,15 @@ export class Room {
       score: { ...this.score },
     });
 
+    if (winner) {
+      this.onGameOver?.(
+        this.code,
+        winner,
+        { ...this.score },
+        Array.from(this.players.values()).map(p => ({ id: p.id, name: p.name, team: p.team })),
+      );
+    }
+
     if (this.timerInterval) {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
@@ -444,6 +470,12 @@ export class Room {
         winner: team,
         score: { ...this.score },
       });
+      this.onGameOver?.(
+        this.code,
+        team,
+        { ...this.score },
+        Array.from(this.players.values()).map(p => ({ id: p.id, name: p.name, team: p.team })),
+      );
       setTimeout(() => {
         this.reset();
       }, 4000);
