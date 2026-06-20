@@ -450,7 +450,7 @@ function renderMatchCards(matches: any[]) {
           </div>
         </div>
         <div class="match-card-footer">
-          <span>${m.mode || '4v4'} · FREE</span>
+          <span>${m.mode || '4v4'} · ${["PUMP-1","PUMP-4","PUMP-7"].includes(m.code) ? "🔒 WALLET ONLY" : "FREE"}</span>
           <span>👥 ${m.players}/${maxPlayers}</span>
         </div>
       `;

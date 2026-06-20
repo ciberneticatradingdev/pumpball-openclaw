@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { Room } from './room';
 import { generateNonce, verifySignature, createToken, verifyToken } from './auth';
-import { getUserById, setUsername, setAvatar, getLeaderboard, initDB } from './database';
+import { getUserById, setUsername, setAvatar, getLeaderboard, initDB, addGameStats, getRecentXpLeaderboard, getTotalRecentXp } from './database';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
@@ -23,6 +23,7 @@ const io = new Server(httpServer, {
 
 const rooms = new Map<string, Room>();
 const playerRooms = new Map<string, string>(); // socketId -> roomCode
+const socketToUser = new Map<string, string>(); // socketId -> userId (wallet-authed)
 
 // Reconnection state
 const reconnectData = new Map<string, { socketId: string; roomCode: string; playerName: string; avatarData?: string }>();
@@ -82,6 +83,16 @@ io.on('connection', (socket) => {
   socketToToken.set(socket.id, token);
   socket.emit('reconnectToken', token);
 
+  // Wallet identification: client sends its JWT so we can credit game XP to the
+  // authenticated user account (used for the daily token reward distribution).
+  socket.on('identify', (data: { token?: string }) => {
+    if (!data || typeof data.token !== 'string') return;
+    const payload = verifyToken(data.token);
+    if (payload?.userId) {
+      socketToUser.set(socket.id, payload.userId);
+    }
+  });
+
   socket.on('createRoom', (data: string | { name: string; avatarData?: string }, callback: (roomCode: string) => void) => {
     const code = generateRoomCode();
     let playerName: string;
@@ -120,6 +131,12 @@ io.on('connection', (socket) => {
       const room = rooms.get(roomCode);
       if (!room) return callback(false, 'Room not found');
       if (room.hasPlayer(socket.id)) return callback(false, 'Already in this room');
+
+      // PUMP-1, PUMP-4, PUMP-7 require wallet login
+      const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+      if (restrictedRooms.includes(roomCode) && !socketToUser.has(socket.id)) {
+        return callback(false, '🔒 Login required for this room');
+      }
 
       // Always allow joining (as spectator if game in progress)
       const success = room.addPlayer(socket.id, playerName, avatarData);
@@ -275,6 +292,7 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log(`[-] Player disconnected: ${socket.id}`);
+    socketToUser.delete(socket.id);
     handleLeave(socket.id, false); // grace period — may reconnect
   });
 
