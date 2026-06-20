@@ -504,22 +504,32 @@ app.get('/api/leaderboard', async (_req, res) => {
 
 // PUMP-1 wins ledger (for manual rewards)
 app.get('/api/room-wins', async (req, res) => {
-  const roomCode = typeof req.query.room === 'string' ? req.query.room : 'PUMP-1';
-  const onlyUnrewarded = req.query.unrewarded === 'true';
-  const limit = Math.min(1000, parseInt(req.query.limit as string, 10) || 100);
-  const wins = await getRoomWins(roomCode, onlyUnrewarded, limit);
-  res.json({ room: roomCode, wins });
+  try {
+    const roomCode = typeof req.query.room === 'string' ? req.query.room : 'PUMP-1';
+    const onlyUnrewarded = req.query.unrewarded === 'true';
+    const limit = Math.min(1000, parseInt(req.query.limit as string, 10) || 100);
+    const wins = await getRoomWins(roomCode, onlyUnrewarded, limit);
+    res.json({ room: roomCode, wins });
+  } catch (e) {
+    console.error('room-wins error:', e);
+    res.json({ room: 'PUMP-1', wins: [], error: 'Database unavailable' });
+  }
 });
 
 app.post('/api/room-wins/:id/rewarded', async (req, res) => {
-  const adminToken = req.headers['x-admin-token'];
-  if (!process.env.ADMIN_TOKEN || adminToken !== process.env.ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const adminToken = req.headers['x-admin-token'];
+    if (!process.env.ADMIN_TOKEN || adminToken !== process.env.ADMIN_TOKEN) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    await markRoomWinRewarded(id);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('mark-rewarded error:', e);
+    res.status(500).json({ error: 'Database error' });
   }
-  const id = parseInt(req.params.id, 10);
-  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-  await markRoomWinRewarded(id);
-  res.json({ success: true });
 });
 
 // Initialize database then start
