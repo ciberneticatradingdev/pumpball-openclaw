@@ -687,6 +687,10 @@ function setupSocket() {
     myId = socket.id ?? '';
     if (renderer) renderer.setMyId(myId);
 
+    // Identify to the server with our wallet JWT so game XP is credited on-chain account
+    const auth = getAuthState();
+    if (auth.token) socket.emit('identify', { token: auth.token });
+
     const overlay = document.getElementById('reconnect-overlay');
     const storedToken = sessionStorage.getItem('pumpball_reconnect_token');
 
@@ -1338,7 +1342,7 @@ function buildUI() {
 
         <div class="ca-banner">
           <span class="ca-label">CA:</span>
-          <code class="ca-address" id="ca-address">2iEQvfXCPRMeBTkMELLMLYV3JPjajetHFxykBxxypump</code>
+          <code class="ca-address" id="ca-address">CA WILL UPDATE SOON</code>
           <button class="ca-copy-btn" id="ca-copy-btn" title="Copy">📋</button>
         </div>
       </main>
@@ -1953,6 +1957,10 @@ function setupEventListeners() {
   // Auth state listener - update UI
   onAuthChange((auth) => {
     updateWalletUI(auth.connected, auth.user);
+    // Re-identify to the game server when wallet connects mid-session
+    if (auth.token && socket && socket.connected) {
+      socket.emit('identify', { token: auth.token });
+    }
   });
 
   // Sidebar nav
