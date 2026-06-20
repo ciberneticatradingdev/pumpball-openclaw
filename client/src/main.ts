@@ -1256,7 +1256,7 @@ function sidebarHTML(context: 'lobby' | 'game') {
       </div>
       <div class="sidebar-socials">
         <a href="https://x.com/PumpBallGames" target="_blank" class="social-link" title="X">𝕏</a>
-        <a href="https://pump.fun/coin/thecoincavariable" target="_blank" class="social-link" title="Pump.fun">
+        <a href="https://pump.fun/coin/BmX8X1NByzjBZScd4GMf9LH6y163BQB9V8VSzK2ipump" target="_blank" class="social-link" title="Pump.fun">
           <img src="/pumpfun-logo.png" alt="Pump.fun" class="social-icon-img" />
         </a>
       </div>
@@ -1355,7 +1355,7 @@ function buildUI() {
 
         <div class="ca-banner">
           <span class="ca-label">CA:</span>
-          <code class="ca-address" id="ca-address">CA WILL UPDATE SOON</code>
+          <code class="ca-address" id="ca-address">BmX8X1NByzjBZScd4GMf9LH6y163BQB9V8VSzK2ipump</code>
           <button class="ca-copy-btn" id="ca-copy-btn" title="Copy">📋</button>
         </div>
       </main>
