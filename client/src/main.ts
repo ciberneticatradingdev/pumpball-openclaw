@@ -1243,9 +1243,8 @@ function sidebarHTML(context: 'lobby' | 'game') {
         <button id="${context === 'lobby' ? 'connect-wallet-btn' : 'game-wallet-btn'}" class="wallet-btn">🔗 Connect Wallet</button>
       </div>
       <div class="sidebar-socials">
-        <a class="social-link" title="X/Twitter">𝕏</a>
-        <a class="social-link" title="Discord">💬</a>
-        <a class="social-link" title="Telegram">✈</a>
+        <a href="https://x.com/PumpBallGames" target="_blank" class="social-link" title="X">𝕏</a>
+        <a href="https://pump.fun/coin/thecoincavariable" target="_blank" class="social-link" title="Pump.fun">⚡</a>
       </div>
     </div>
   `;
