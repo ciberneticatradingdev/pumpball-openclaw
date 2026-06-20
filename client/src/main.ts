@@ -455,7 +455,16 @@ function renderMatchCards(matches: any[]) {
         </div>
       `;
 
+      const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+      const isRestricted = restrictedRooms.includes(m.code);
+      if (isRestricted) card.classList.add('restricted-room');
+
       card.addEventListener('click', () => {
+        const auth = getAuthState();
+        if (isRestricted && !auth.token) {
+          toast('🔒 Connect wallet to join this room', 'error');
+          return;
+        }
         const name = getPlayerName();
         myName = name;
         if (m.status === 'playing') {
@@ -463,7 +472,7 @@ function renderMatchCards(matches: any[]) {
         } else {
           toast('Joining team...', 'info');
         }
-        socket.emit('joinRoom', { roomCode: m.code, name, avatarData: getPlayerAvatarData() }, (success: boolean, error?: string) => {
+        socket.emit('joinRoom', { roomCode: m.code, name, avatarData: getPlayerAvatarData(), token: auth.token || undefined }, (success: boolean, error?: string) => {
           if (!success) toast(error || 'Could not join', 'error');
         });
       });
@@ -705,15 +714,22 @@ function setupSocket() {
       if (pendingJoinCode && !currentRoom) {
         const code = pendingJoinCode;
         pendingJoinCode = null;
-        const name = getPlayerName();
-        myName = name;
-        toast(`Joining room ${code}...`, 'info');
-        socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData() }, (success: boolean, error?: string) => {
-          if (!success) {
-            toast(error || 'Could not join room from link', 'error');
-            clearRoomUrl();
-          }
-        });
+        const auth = getAuthState();
+        const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+        if (restrictedRooms.includes(code) && !auth.token) {
+          toast('🔒 Connect wallet to join this room', 'error');
+          clearRoomUrl();
+        } else {
+          const name = getPlayerName();
+          myName = name;
+          toast(`Joining room ${code}...`, 'info');
+          socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData(), token: auth.token || undefined }, (success: boolean, error?: string) => {
+            if (!success) {
+              toast(error || 'Could not join room from link', 'error');
+              clearRoomUrl();
+            }
+          });
+        }
       }
     }
   });
@@ -1596,13 +1612,20 @@ function setupEventListeners() {
 
   // Lobby — Join by code
   function joinRoom() {
+    const auth = getAuthState();
     const name = getPlayerName();
     const code = $<HTMLInputElement>('#join-code-input').value.trim().toUpperCase();
     const errEl = $<HTMLElement>('#lobby-error');
     if (!code) { errEl.textContent = 'Enter a room code'; return; }
+    const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
+    if (restrictedRooms.includes(code) && !auth.token) {
+      errEl.textContent = '🔒 Connect wallet to join this room';
+      toast('🔒 Connect wallet to join this room', 'error');
+      return;
+    }
     myName = name;
     errEl.textContent = '';
-    socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData() }, (success: boolean, error?: string) => {
+    socket.emit('joinRoom', { roomCode: code, name, avatarData: getPlayerAvatarData(), token: auth.token || undefined }, (success: boolean, error?: string) => {
       if (!success) { errEl.textContent = error ?? 'Could not join'; toast(error ?? 'Could not join', 'error'); }
     });
   }

@@ -117,7 +117,7 @@ io.on('connection', (socket) => {
   socket.on(
     'joinRoom',
     (
-      data: { roomCode: string; name: string; avatarData?: string },
+      data: { roomCode: string; name: string; avatarData?: string; token?: string },
       callback: (success: boolean, error?: string) => void,
     ) => {
       if (!data || typeof data !== 'object') return callback(false, 'Invalid data');
@@ -132,10 +132,15 @@ io.on('connection', (socket) => {
       if (!room) return callback(false, 'Room not found');
       if (room.hasPlayer(socket.id)) return callback(false, 'Already in this room');
 
-      // PUMP-1, PUMP-4, PUMP-7 require wallet login
+      // PUMP-1, PUMP-4, PUMP-7 require a valid wallet JWT
       const restrictedRooms = ['PUMP-1', 'PUMP-4', 'PUMP-7'];
-      if (restrictedRooms.includes(roomCode) && !socketToUser.has(socket.id)) {
-        return callback(false, '🔒 Login required for this room');
+      if (restrictedRooms.includes(roomCode)) {
+        const token = typeof data.token === 'string' ? data.token : undefined;
+        const payload = token ? verifyToken(token) : null;
+        if (!payload?.userId) {
+          return callback(false, '🔒 Connect wallet to join this room');
+        }
+        socketToUser.set(socket.id, payload.userId);
       }
 
       // Always allow joining (as spectator if game in progress)

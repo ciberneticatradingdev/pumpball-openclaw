@@ -278,6 +278,16 @@ body::after {
   transform: translateY(-2px);
 }
 
+.match-card.restricted-room {
+  border: 1px dashed var(--danger);
+}
+
+.match-card.restricted-room:hover {
+  border-color: var(--danger);
+  background: rgba(255, 23, 68, 0.05);
+  box-shadow: 0 8px 32px rgba(255, 23, 68, 0.1);
+}
+
 .match-card-header {
   display: flex; align-items: center; justify-content: space-between;
 }
