@@ -1239,6 +1239,7 @@ function sidebarHTML(context: 'lobby' | 'game') {
         <button class="nav-item" data-nav="leaderboard"><span class="nav-icon">🏆</span> Leaderboard</button>
         <button class="nav-item" data-nav="settings"><span class="nav-icon">⚙</span> Settings</button>
         <button class="nav-item" data-nav="about"><span class="nav-icon">ℹ️</span> About</button>
+        <button class="nav-item" data-nav="rewards"><span class="nav-icon">🎁</span> Rewards</button>
       </div>
       <div class="sidebar-user">
         <div class="user-info">
@@ -1352,6 +1353,24 @@ function buildUI() {
               <button id="profile-connect-btn" class="btn btn-primary">Connect Wallet</button>
             </div>
           </div>
+
+        <!-- Rewards Admin Panel -->
+        <div id="rewards-section" class="rewards-screen" style="display:none">
+          <div class="rewards-header">
+            <h2>🏆 PUMP-1 Winners</h2>
+            <p class="rewards-subtitle">Players who won matches in the PUMP-1 room. Mark them as rewarded after sending tokens.</p>
+          </div>
+          <div class="rewards-admin-bar">
+            <input type="text" id="admin-token-input" placeholder="Admin token" maxlength="60" />
+            <button id="rewards-refresh-btn" class="btn btn-secondary btn-sm">🔄 Refresh</button>
+            <label class="rewards-filter-label">
+              <input type="checkbox" id="rewards-show-all" /> Show all (incl. rewarded)
+            </label>
+          </div>
+          <div id="rewards-list" class="rewards-list">
+            <div class="rewards-empty">Loading winners...</div>
+          </div>
+        </div>
 
         <div class="ca-banner">
           <span class="ca-label">CA:</span>
@@ -1995,12 +2014,16 @@ function setupEventListeners() {
         if (nameRow) nameRow.style.display = '';
         if (profileSection) profileSection.classList.remove('active');
         hideLeaderboard();
+        const rs = document.getElementById('rewards-section');
+        if (rs) rs.style.display = 'none';
       } else if (nav === 'profile') {
         if (matchesSection) matchesSection.style.display = 'none';
         if (customSection) customSection.style.display = 'none';
         if (nameRow) nameRow.style.display = 'none';
         if (profileSection) profileSection.classList.add('active');
         hideLeaderboard();
+        const rs2 = document.getElementById('rewards-section');
+        if (rs2) rs2.style.display = 'none';
         // Render avatar grid in profile
         const pg = document.getElementById('profile-avatar-grid');
         if (pg) renderAvatarGrid(pg);
@@ -2010,6 +2033,19 @@ function setupEventListeners() {
         if (nameRow) nameRow.style.display = 'none';
         if (profileSection) profileSection.classList.remove('active');
         showLeaderboard();
+        const rs3 = document.getElementById('rewards-section');
+        if (rs3) rs3.style.display = 'none';
+      } else if (nav === 'rewards') {
+        if (matchesSection) matchesSection.style.display = 'none';
+        if (customSection) customSection.style.display = 'none';
+        if (nameRow) nameRow.style.display = 'none';
+        if (profileSection) profileSection.classList.remove('active');
+        hideLeaderboard();
+        const rewardsSection = document.getElementById('rewards-section');
+        if (rewardsSection) rewardsSection.style.display = '';
+        loadRoomWins();
+      } else if (nav === 'about') {
+        toast('PumpBall — football on-chain ⚽', 'info');
       } else {
         toast(((nav || '').charAt(0).toUpperCase() + (nav || '').slice(1)) + ' — coming soon', 'info');
       }
@@ -2065,6 +2101,94 @@ function setupEventListeners() {
   }
   $<HTMLButtonElement>('#room-chat-send').addEventListener('click', sendRoomChat);
   $<HTMLInputElement>('#room-chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendRoomChat(); } });
+
+  // ===== REWARDS PANEL =====
+  async function loadRoomWins() {
+    const listEl = document.getElementById('rewards-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="rewards-empty">Loading winners...</div>';
+
+    const showAll = (document.getElementById('rewards-show-all') as HTMLInputElement)?.checked;
+    const params = new URLSearchParams({ room: 'PUMP-1' });
+    if (!showAll) params.set('unrewarded', 'true');
+
+    try {
+      const res = await fetch(`${SERVER_URL}/api/room-wins?${params}`);
+      if (!res.ok) throw new Error('Failed to load');
+      const data = await res.json();
+      renderRoomWins(data.wins || []);
+    } catch (e) {
+      listEl.innerHTML = '<div class="rewards-empty">Failed to load winners.</div>';
+    }
+  }
+
+  function renderRoomWins(wins: any[]) {
+    const listEl = document.getElementById('rewards-list');
+    if (!listEl) return;
+    if (wins.length === 0) {
+      listEl.innerHTML = '<div class="rewards-empty">No winners yet. Be the first! 🏆</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    wins.forEach((w) => {
+      const card = document.createElement('div');
+      card.className = 'reward-card' + (w.rewarded ? ' rewarded' : '');
+      const date = new Date(w.created_at).toLocaleString();
+      card.innerHTML = `
+        <div class="reward-card-main">
+          <div class="reward-wallet" title="${w.winner_wallet}">
+            ${w.winner_wallet.slice(0, 4)}...${w.winner_wallet.slice(-4)}
+          </div>
+          <div class="reward-name">${w.winner_username || 'Unknown'}</div>
+          <div class="reward-team">Team: ${w.winner_team.toUpperCase()}</div>
+          <div class="reward-score">Score: ${w.score_red} - ${w.score_blue}</div>
+          <div class="reward-date">${date}</div>
+        </div>
+        <div class="reward-card-actions">
+          ${w.rewarded
+            ? '<span class="reward-badge">✅ Rewarded</span>'
+            : `<button class="btn btn-primary btn-sm reward-mark-btn" data-id="${w.id}">Mark Rewarded</button>`}
+        </div>
+      `;
+      listEl.appendChild(card);
+    });
+
+    // Attach mark-rewarded handlers
+    listEl.querySelectorAll<HTMLButtonElement>('.reward-mark-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const adminToken = (document.getElementById('admin-token-input') as HTMLInputElement)?.value.trim();
+        if (!adminToken) {
+          toast('Enter admin token first', 'error');
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+          const res = await fetch(`${SERVER_URL}/api/room-wins/${id}/rewarded`, {
+            method: 'POST',
+            headers: { 'x-admin-token': adminToken, 'Content-Type': 'application/json' },
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed');
+          }
+          toast('Marked as rewarded ✅', 'success');
+          loadRoomWins();
+        } catch (e: any) {
+          toast(e.message || 'Failed to mark', 'error');
+          btn.disabled = false;
+          btn.textContent = 'Mark Rewarded';
+        }
+      });
+    });
+  }
+
+  // Rewards panel events
+  const rewardsRefreshBtn = document.getElementById('rewards-refresh-btn');
+  if (rewardsRefreshBtn) rewardsRefreshBtn.addEventListener('click', loadRoomWins);
+  const rewardsShowAll = document.getElementById('rewards-show-all');
+  if (rewardsShowAll) rewardsShowAll.addEventListener('change', loadRoomWins);
 
   // Game chat
   function sendGameChat() {
