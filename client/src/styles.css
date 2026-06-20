@@ -180,6 +180,19 @@ body::after {
 
 .social-link:hover { color: var(--accent); text-shadow: 0 0 8px var(--accent-glow); }
 
+.social-icon-img {
+  width: 18px;
+  height: 18px;
+  display: block;
+  object-fit: contain;
+  filter: grayscale(100%) brightness(1.2);
+  transition: filter 0.2s;
+}
+
+.social-link:hover .social-icon-img {
+  filter: grayscale(0%) brightness(1);
+}
+
 .wallet-btn {
   width: 100%; padding: 10px 14px;
   background: var(--accent); color: #000;

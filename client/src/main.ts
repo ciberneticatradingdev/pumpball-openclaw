@@ -1244,7 +1244,9 @@ function sidebarHTML(context: 'lobby' | 'game') {
       </div>
       <div class="sidebar-socials">
         <a href="https://x.com/PumpBallGames" target="_blank" class="social-link" title="X">𝕏</a>
-        <a href="https://pump.fun/coin/thecoincavariable" target="_blank" class="social-link" title="Pump.fun">⚡</a>
+        <a href="https://pump.fun/coin/thecoincavariable" target="_blank" class="social-link" title="Pump.fun">
+          <img src="/pumpfun-logo.png" alt="Pump.fun" class="social-icon-img" />
+        </a>
       </div>
     </div>
   `;
